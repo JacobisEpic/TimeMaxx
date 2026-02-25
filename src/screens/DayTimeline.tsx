@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Modal,
   Pressable,
   ScrollView,
@@ -9,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { Block, PIXELS_PER_MINUTE } from '@/src/components/Block';
 import { BlockEditorModal } from '@/src/components/BlockEditorModal';
@@ -19,7 +22,6 @@ import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
 import { clamp, formatDuration, formatHHMM, parseHHMM, roundTo15 } from '@/src/utils/time';
 
-type LaneFilter = 'all' | Lane;
 type TagFilter = 'all' | (typeof TAG_CATALOG)[number];
 
 type EditorState = {
@@ -42,11 +44,29 @@ type QuickPreset = {
   tags: string[];
 };
 
+type DraftCreateState = {
+  anchorMin: number;
+  startMin: number;
+  endMin: number;
+  invalid: boolean;
+};
+
+type DraftCandidate = {
+  anchorMin: number;
+  anchorAbsoluteY: number;
+  lastAbsoluteY: number;
+  startedAtMs: number;
+};
+
 const MINUTES_PER_DAY = 24 * 60;
 const TIMELINE_HEIGHT = MINUTES_PER_DAY * PIXELS_PER_MINUTE;
 const DEFAULT_VIEWPORT_HOURS = 10;
 const VIEWPORT_HEIGHT = DEFAULT_VIEWPORT_HOURS * 60 * PIXELS_PER_MINUTE;
 const FEEDBACK_DURATION_MS = 1500;
+const CREATE_THRESHOLD_PX = 8;
+const CREATE_DELAY_MS = 120;
+const TAP_CREATE_DURATION_MIN = 60;
+const SCROLL_LIKE_VELOCITY_Y = 1100;
 
 const QUICK_PRESETS: QuickPreset[] = [
   { key: 'focus-60', title: 'Focus', durationMin: 60, lane: 'planned', tags: ['focus'] },
@@ -74,7 +94,9 @@ function formatHourLabel(hour: number): string {
 }
 
 function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
-  return [...items].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.id.localeCompare(b.id));
+  return [...items].sort(
+    (a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.id.localeCompare(b.id)
+  );
 }
 
 function hasOverlap(
@@ -93,19 +115,17 @@ function hasOverlap(
   });
 }
 
-function matchesFilters(block: TimeBlock, laneFilter: LaneFilter, tagFilter: TagFilter): boolean {
-  if (laneFilter !== 'all' && block.lane !== laneFilter) {
-    return false;
+function matchesTagFilter(block: TimeBlock, tagFilter: TagFilter): boolean {
+  if (tagFilter === 'all') {
+    return true;
   }
 
-  if (tagFilter !== 'all' && !block.tags.map((tag) => tag.toLowerCase()).includes(tagFilter)) {
-    return false;
-  }
-
-  return true;
+  return block.tags.map((tag) => tag.toLowerCase()).includes(tagFilter);
 }
 
-function buildTagTotals(blocks: TimeBlock[]): Array<{ tag: string; plannedMin: number; actualMin: number; deltaMin: number }> {
+function buildTagTotals(
+  blocks: TimeBlock[]
+): Array<{ tag: string; plannedMin: number; actualMin: number; deltaMin: number }> {
   const totals = new Map<string, { plannedMin: number; actualMin: number }>();
 
   blocks.forEach((block) => {
@@ -168,19 +188,32 @@ function findEarliestSlot(
   return null;
 }
 
-function getDefaultCreateRange(): { startMin: number; endMin: number } {
-  const now = new Date();
-  const currentMinute = now.getHours() * 60 + now.getMinutes();
-
-  let startMin = clamp(roundTo15(currentMinute), 0, 1439);
-  let endMin = clamp(startMin + 60, 0, MINUTES_PER_DAY);
-
-  if (endMin - startMin <= 0) {
-    startMin = 480;
-    endMin = 540;
+function normalizeDraftRange(anchorMin: number, cursorMin: number): { startMin: number; endMin: number } {
+  if (cursorMin >= anchorMin) {
+    return {
+      startMin: anchorMin,
+      endMin: Math.min(MINUTES_PER_DAY, cursorMin + 15),
+    };
   }
 
-  return { startMin, endMin };
+  return {
+    startMin: Math.max(0, cursorMin),
+    endMin: Math.min(MINUTES_PER_DAY, anchorMin + 15),
+  };
+}
+
+function minuteFromGestureY(y: number): number | null {
+  if (!Number.isFinite(y)) {
+    return null;
+  }
+
+  const minute = Math.floor(y / PIXELS_PER_MINUTE);
+
+  if (!Number.isFinite(minute)) {
+    return null;
+  }
+
+  return clamp(roundTo15(minute), 0, MINUTES_PER_DAY - 15);
 }
 
 export default function DayTimeline() {
@@ -192,12 +225,22 @@ export default function DayTimeline() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<EditorState>(INITIAL_EDITOR_STATE);
-  const [laneFilter, setLaneFilter] = useState<LaneFilter>('all');
+  const [selectedLane, setSelectedLane] = useState<Lane>('planned');
   const [tagFilter, setTagFilter] = useState<TagFilter>('all');
   const [quickAddVisible, setQuickAddVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
+  const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const draftCreateRef = useRef<DraftCreateState | null>(null);
+  const draftCandidateRef = useRef<DraftCandidate | null>(null);
+  const finalizeHandledRef = useRef(false);
+  const createGestureBlockedRef = useRef(false);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadRequestIdRef = useRef(0);
+  const timelineScrollRef = useRef<ScrollView | null>(null);
+  const timelineViewportTopRef = useRef(0);
+  const timelineScrollOffsetYRef = useRef(0);
+  const autoScrolledDayKeyRef = useRef<string | null>(null);
 
   const todayDayKey = getLocalDayKey();
   const canGoToNextDay = dayKey < todayDayKey;
@@ -218,6 +261,14 @@ export default function DayTimeline() {
   }, [dayKey]);
 
   const sortedBlocks = useMemo(() => sortByStartMin(blocks), [blocks]);
+  const selectedLaneBlocks = useMemo(
+    () => sortedBlocks.filter((block) => block.lane === selectedLane),
+    [selectedLane, sortedBlocks]
+  );
+  const nowMinute = useMemo(() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  }, [dayKey, reloadTick]);
 
   const { plannedTotalMin, actualTotalMin, deltaMin } = useMemo(() => {
     const totals = sortedBlocks.reduce(
@@ -245,15 +296,32 @@ export default function DayTimeline() {
   const tagTotals = useMemo(() => buildTagTotals(sortedBlocks), [sortedBlocks]);
   const visibleTagTotals = useMemo(() => tagTotals.slice(0, 5), [tagTotals]);
 
-  const laneRenderBlocks = useMemo(() => {
-    return {
-      planned: sortedBlocks.filter((block) => block.lane === 'planned'),
-      actual: sortedBlocks.filter((block) => block.lane === 'actual'),
-    };
-  }, [sortedBlocks]);
-
   const reloadCurrentDay = useCallback(() => {
     setReloadTick((current) => current + 1);
+  }, []);
+
+  const syncTimelineViewportTop = useCallback(() => {
+    const measurable = timelineScrollRef.current as unknown as
+      | {
+          measureInWindow?: (
+            cb: (x: number, y: number, width: number, height: number) => void
+          ) => void;
+        }
+      | null;
+
+    measurable?.measureInWindow?.((_x: number, y: number) => {
+      timelineViewportTopRef.current = y;
+    });
+  }, []);
+
+  const minuteFromAbsoluteY = useCallback((absoluteY: number): number | null => {
+    if (!Number.isFinite(absoluteY)) {
+      return null;
+    }
+
+    const relativeY =
+      absoluteY - timelineViewportTopRef.current + timelineScrollOffsetYRef.current;
+    return minuteFromGestureY(relativeY);
   }, []);
 
   const closeEditor = useCallback(() => {
@@ -270,6 +338,10 @@ export default function DayTimeline() {
       const requestId = ++loadRequestIdRef.current;
       setBlocks([]);
       setActiveDragId(null);
+      setDraftCreate(null);
+      draftCreateRef.current = null;
+      draftCandidateRef.current = null;
+      setIsCreatingDraft(false);
 
       try {
         const loadedBlocks = await getBlocksForDay(dayKey);
@@ -293,6 +365,31 @@ export default function DayTimeline() {
     };
   }, [dayKey, reloadTick, dataVersion]);
 
+  useEffect(() => {
+    if (autoScrolledDayKeyRef.current === dayKey) {
+      return;
+    }
+
+    const targetMinute =
+      dayKey === todayDayKey ? Math.max(0, nowMinute - 90) : 8 * 60;
+    const targetY = targetMinute * PIXELS_PER_MINUTE;
+
+    const timer = setTimeout(() => {
+      timelineScrollRef.current?.scrollTo({ y: targetY, animated: false });
+      autoScrolledDayKeyRef.current = dayKey;
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [dayKey, nowMinute, todayDayKey]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      syncTimelineViewportTop();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [dayKey, syncTimelineViewportTop]);
+
   const showFeedback = useCallback((message: string) => {
     if (feedbackTimerRef.current) {
       clearTimeout(feedbackTimerRef.current);
@@ -306,21 +403,27 @@ export default function DayTimeline() {
     }, FEEDBACK_DURATION_MS);
   }, []);
 
-  const openCreateEditor = useCallback((lane: Lane) => {
-    const { startMin, endMin } = getDefaultCreateRange();
+  const openCreateEditor = useCallback(
+    (lane: Lane, presetRange?: { startMin: number; endMin: number }) => {
+      const defaultStart =
+        lane === 'planned' ? settings.plannedScanStartMin : settings.actualScanStartMin;
+      const startMin = presetRange?.startMin ?? clamp(roundTo15(defaultStart), 0, MINUTES_PER_DAY - 15);
+      const endMin = presetRange?.endMin ?? Math.min(MINUTES_PER_DAY, startMin + 60);
 
-    setEditorState({
-      visible: true,
-      mode: 'create',
-      lane,
-      blockId: null,
-      title: '',
-      tags: [],
-      startText: formatHHMM(startMin),
-      endText: formatHHMM(endMin),
-      errorText: null,
-    });
-  }, []);
+      setEditorState({
+        visible: true,
+        mode: 'create',
+        lane,
+        blockId: null,
+        title: '',
+        tags: [],
+        startText: formatHHMM(startMin),
+        endText: formatHHMM(endMin),
+        errorText: null,
+      });
+    },
+    [settings.actualScanStartMin, settings.plannedScanStartMin]
+  );
 
   const openEditEditor = useCallback((block: TimeBlock) => {
     setEditorState({
@@ -343,6 +446,7 @@ export default function DayTimeline() {
 
   const goToToday = useCallback(() => {
     closeEditor();
+    autoScrolledDayKeyRef.current = null;
     setDayKey(getLocalDayKey());
   }, [closeEditor]);
 
@@ -397,7 +501,9 @@ export default function DayTimeline() {
       void (async () => {
         try {
           await updateBlock(updatedBlock, dayKey);
-          setBlocks((current) => sortByStartMin(current.map((block) => (block.id === blockId ? updatedBlock : block))));
+          setBlocks((current) =>
+            sortByStartMin(current.map((block) => (block.id === blockId ? updatedBlock : block)))
+          );
         } catch {
           Alert.alert('Storage error', 'Could not save drag change.');
         }
@@ -408,7 +514,7 @@ export default function DayTimeline() {
 
   const handleBlockPress = useCallback(
     (blockId: string) => {
-      if (activeDragId !== null) {
+      if (activeDragId !== null || isCreatingDraft) {
         return;
       }
 
@@ -420,7 +526,7 @@ export default function DayTimeline() {
 
       openEditEditor(block);
     },
-    [activeDragId, openEditEditor, sortedBlocks]
+    [activeDragId, isCreatingDraft, openEditEditor, sortedBlocks]
   );
 
   const setEditorField = useCallback((field: keyof EditorState, value: string) => {
@@ -528,7 +634,9 @@ export default function DayTimeline() {
       void (async () => {
         try {
           await updateBlock(updatedBlock, dayKey);
-          setBlocks((current) => sortByStartMin(current.map((block) => (block.id === updatedBlock.id ? updatedBlock : block))));
+          setBlocks((current) =>
+            sortByStartMin(current.map((block) => (block.id === updatedBlock.id ? updatedBlock : block)))
+          );
           closeEditor();
         } catch {
           Alert.alert('Storage error', 'Could not save block changes.');
@@ -651,7 +759,9 @@ export default function DayTimeline() {
 
       try {
         const yesterdayBlocks = await getBlocksForDay(yesterdayKey);
-        const yesterdayPlanned = sortByStartMin(yesterdayBlocks.filter((block) => block.lane === 'planned'));
+        const yesterdayPlanned = sortByStartMin(
+          yesterdayBlocks.filter((block) => block.lane === 'planned')
+        );
         const targetPlanned = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
 
         let created = 0;
@@ -705,12 +815,13 @@ export default function DayTimeline() {
     const plannedBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
     const actualBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'actual'));
 
-    const dateText = visibleDateLabel;
     const tagLines = tagTotals.length
       ? tagTotals
           .map(
             (row) =>
-              `${row.tag}: planned ${formatDuration(row.plannedMin)}, actual ${formatDuration(row.actualMin)}, delta ${row.deltaMin >= 0 ? '+' : '-'}${formatDuration(row.deltaMin)}`
+              `${row.tag}: planned ${formatDuration(row.plannedMin)}, actual ${formatDuration(
+                row.actualMin
+              )}, delta ${row.deltaMin >= 0 ? '+' : '-'}${formatDuration(row.deltaMin)}`
           )
           .join('\n')
       : 'none';
@@ -719,7 +830,7 @@ export default function DayTimeline() {
     const actualLines = actualBlocks.length ? actualBlocks.map(formatBlockLine).join('\n') : 'none';
 
     const summary = [
-      `Date: ${dateText}`,
+      `Date: ${visibleDateLabel}`,
       `Planned total: ${formatDuration(plannedTotalMin)}`,
       `Actual total: ${formatDuration(actualTotalMin)}`,
       `Delta: ${deltaMin >= 0 ? '+' : '-'}${formatDuration(deltaMin)}`,
@@ -740,38 +851,219 @@ export default function DayTimeline() {
     });
   }, [actualTotalMin, dayKey, deltaMin, plannedTotalMin, sortedBlocks, tagTotals, visibleDateLabel]);
 
-  const renderLaneBlocks = useCallback(
-    (lane: Lane) => {
-      return laneRenderBlocks[lane].map((block) => {
-        const matches = matchesFilters(block, laneFilter, tagFilter);
+  const beginDraftCreation = useCallback(
+    (absoluteY: number) => {
+      finalizeHandledRef.current = false;
+      draftCandidateRef.current = null;
+      draftCreateRef.current = null;
+      setDraftCreate(null);
+      setIsCreatingDraft(false);
+
+      if (activeDragId !== null) {
+        createGestureBlockedRef.current = true;
+        return;
+      }
+
+      const minute = minuteFromAbsoluteY(absoluteY);
+
+      if (minute === null) {
+        createGestureBlockedRef.current = true;
+        return;
+      }
+
+      const touchedExisting = selectedLaneBlocks.some(
+        (block) => minute >= block.startMin && minute < block.endMin
+      );
+
+      if (touchedExisting) {
+        createGestureBlockedRef.current = true;
+        return;
+      }
+
+      createGestureBlockedRef.current = false;
+      draftCandidateRef.current = {
+        anchorMin: minute,
+        anchorAbsoluteY: absoluteY,
+        lastAbsoluteY: absoluteY,
+        startedAtMs: Date.now(),
+      };
+    },
+    [activeDragId, minuteFromAbsoluteY, selectedLaneBlocks]
+  );
+
+  const updateDraftCreation = useCallback(
+    (absoluteY: number, velocityY: number) => {
+      if (createGestureBlockedRef.current) {
+        return;
+      }
+
+      const minute = minuteFromAbsoluteY(absoluteY);
+
+      if (minute === null) {
+        return;
+      }
+
+      const candidate = draftCandidateRef.current;
+
+      if (!candidate) {
+        return;
+      }
+
+      if (!draftCreateRef.current) {
+        const dragDistance = Math.abs(absoluteY - candidate.anchorAbsoluteY);
+        const hasMovedPastThreshold = dragDistance >= CREATE_THRESHOLD_PX;
+        const hasHeldLongEnough = Date.now() - candidate.startedAtMs >= CREATE_DELAY_MS;
+        const isScrollLikeSwipe =
+          Number.isFinite(velocityY) && Math.abs(velocityY) > SCROLL_LIKE_VELOCITY_Y;
+
+        if ((!hasMovedPastThreshold && !hasHeldLongEnough) || isScrollLikeSwipe) {
+          draftCandidateRef.current = {
+            ...candidate,
+            lastAbsoluteY: absoluteY,
+          };
+          return;
+        }
+
+        const initialRange = normalizeDraftRange(candidate.anchorMin, minute);
+        const invalid = hasOverlap(
+          selectedLane,
+          null,
+          initialRange.startMin,
+          initialRange.endMin,
+          sortedBlocks
+        );
+        const initialDraft: DraftCreateState = {
+          anchorMin: candidate.anchorMin,
+          startMin: initialRange.startMin,
+          endMin: initialRange.endMin,
+          invalid,
+        };
+
+        draftCreateRef.current = initialDraft;
+        setDraftCreate(initialDraft);
+        setIsCreatingDraft(true);
+        return;
+      }
+
+      const current = draftCreateRef.current;
+
+      const nextRange = normalizeDraftRange(current.anchorMin, minute);
+      const invalid = hasOverlap(selectedLane, null, nextRange.startMin, nextRange.endMin, sortedBlocks);
+      const nextDraft: DraftCreateState = {
+        ...current,
+        startMin: nextRange.startMin,
+        endMin: nextRange.endMin,
+        invalid,
+      };
+
+      draftCreateRef.current = nextDraft;
+      setDraftCreate(nextDraft);
+    },
+    [minuteFromAbsoluteY, selectedLane, sortedBlocks]
+  );
+
+  const finalizeDraftCreation = useCallback(() => {
+    if (finalizeHandledRef.current) {
+      return;
+    }
+
+    finalizeHandledRef.current = true;
+
+    if (createGestureBlockedRef.current) {
+      createGestureBlockedRef.current = false;
+      setIsCreatingDraft(false);
+      setDraftCreate(null);
+      draftCreateRef.current = null;
+      draftCandidateRef.current = null;
+      return;
+    }
+
+    const currentCandidate = draftCandidateRef.current;
+    const currentDraft = draftCreateRef.current;
+
+    setIsCreatingDraft(false);
+    setDraftCreate(null);
+    draftCreateRef.current = null;
+    draftCandidateRef.current = null;
+
+    if (!currentDraft && !currentCandidate) {
+      return;
+    }
+
+    if (currentDraft && currentDraft.invalid) {
+      Alert.alert('Invalid time', 'Time overlaps another block.');
+      return;
+    }
+
+    if (currentDraft) {
+      openCreateEditor(selectedLane, {
+        startMin: currentDraft.startMin,
+        endMin: currentDraft.endMin,
+      });
+      return;
+    }
+
+    const tapStartMin = currentCandidate?.anchorMin;
+    const tapDragDistance =
+      currentCandidate === null
+        ? 0
+        : Math.abs(currentCandidate.lastAbsoluteY - currentCandidate.anchorAbsoluteY);
+
+    if (tapDragDistance > CREATE_THRESHOLD_PX) {
+      return;
+    }
+
+    if (tapStartMin === undefined) {
+      return;
+    }
+
+    const tapEndMin = Math.min(MINUTES_PER_DAY, tapStartMin + TAP_CREATE_DURATION_MIN);
+
+    if (hasOverlap(selectedLane, null, tapStartMin, tapEndMin, sortedBlocks)) {
+      Alert.alert('Invalid time', 'Time overlaps another block.');
+      return;
+    }
+
+    openCreateEditor(selectedLane, {
+      startMin: tapStartMin,
+      endMin: tapEndMin,
+    });
+  }, [openCreateEditor, selectedLane, sortedBlocks]);
+
+  const createGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetY([-CREATE_THRESHOLD_PX, CREATE_THRESHOLD_PX])
+        .shouldCancelWhenOutside(false)
+        .onBegin((event) => {
+          beginDraftCreation(event.absoluteY);
+        })
+        .onUpdate((event) => {
+          updateDraftCreation(event.absoluteY, event.velocityY);
+        })
+        .onFinalize(() => {
+          finalizeDraftCreation();
+        }),
+    [beginDraftCreation, finalizeDraftCreation, updateDraftCreation]
+  );
+
+  const renderedLaneBlocks = useMemo(() => {
+    return selectedLaneBlocks
+      .map((block) => {
+        const matches = matchesTagFilter(block, tagFilter);
 
         if (!settings.dimInsteadOfHide && !matches) {
           return null;
         }
 
-        const dimmed = settings.dimInsteadOfHide && !matches;
-
-        return (
-          <Block
-            key={block.id}
-            id={block.id}
-            startMin={block.startMin}
-            endMin={block.endMin}
-            title={block.title}
-            tags={block.tags}
-            lane={block.lane}
-            onPress={handleBlockPress}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragRelease={handleDragRelease}
-            interactive={!dimmed}
-            dimmed={dimmed}
-          />
-        );
-      });
-    },
-    [handleBlockPress, handleDragEnd, handleDragRelease, handleDragStart, laneFilter, laneRenderBlocks, settings.dimInsteadOfHide, tagFilter]
-  );
+        return {
+          block,
+          dimmed: settings.dimInsteadOfHide && !matches,
+        };
+      })
+      .filter((item): item is { block: TimeBlock; dimmed: boolean } => item !== null);
+  }, [selectedLaneBlocks, settings.dimInsteadOfHide, tagFilter]);
 
   const hasAnyBlocks = sortedBlocks.length > 0;
 
@@ -819,23 +1111,30 @@ export default function DayTimeline() {
           <Text style={styles.quickAddButtonText}>Quick Add</Text>
         </Pressable>
 
-        <View style={styles.filterPillsRow}>
-          {(['all', 'planned', 'actual'] as LaneFilter[]).map((value) => {
-            const selected = laneFilter === value;
+        <View style={styles.segmentedControl}>
+          {(['planned', 'actual'] as Lane[]).map((lane) => {
+            const selected = selectedLane === lane;
 
             return (
               <Pressable
-                key={value}
-                accessibilityLabel={`Filter lane ${value}`}
-                style={[styles.filterPill, selected && styles.filterPillSelected]}
-                onPress={() => setLaneFilter(value)}>
-                <Text style={[styles.filterPillText, selected && styles.filterPillTextSelected]}>
-                  {value === 'all' ? 'All' : value === 'planned' ? 'Planned' : 'Actual'}
+                key={lane}
+                accessibilityLabel={`Select ${lane} lane`}
+                onPress={() => setSelectedLane(lane)}
+                style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
+                <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
+                  {lane === 'planned' ? 'Planned' : 'Actual'}
                 </Text>
               </Pressable>
             );
           })}
         </View>
+
+        <Pressable
+          accessibilityLabel={`Add ${selectedLane} block`}
+          style={styles.addButtonCompact}
+          onPress={() => openCreateEditor(selectedLane)}>
+          <Text style={styles.addButtonCompactText}>Add</Text>
+        </Pressable>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagFilterRow}>
@@ -901,30 +1200,19 @@ export default function DayTimeline() {
 
       <View style={styles.headerRow}>
         <View style={styles.timeHeader} />
-        <View style={styles.laneHeaderCell}>
-          <Text style={styles.laneHeader}>Planned</Text>
-          <Pressable
-            accessibilityLabel="Add planned block"
-            style={styles.addButton}
-            onPress={() => openCreateEditor('planned')}>
-            <Text style={styles.addButtonText}>Add</Text>
-          </Pressable>
-        </View>
-        <View style={styles.laneHeaderCell}>
-          <Text style={styles.laneHeader}>Actual</Text>
-          <Pressable
-            accessibilityLabel="Add actual block"
-            style={styles.addButton}
-            onPress={() => openCreateEditor('actual')}>
-            <Text style={styles.addButtonText}>Add</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.laneHeader}>{selectedLane === 'planned' ? 'Planned lane' : 'Actual lane'}</Text>
       </View>
 
       <ScrollView
-        scrollEnabled={activeDragId === null}
+        ref={timelineScrollRef}
+        scrollEnabled={activeDragId === null && !isCreatingDraft}
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { height: TIMELINE_HEIGHT }]}
+        onLayout={syncTimelineViewportTop}
+        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator>
         <View style={[styles.timelineBody, { height: TIMELINE_HEIGHT }]}>
           <View style={styles.timeColumn}>
@@ -939,17 +1227,62 @@ export default function DayTimeline() {
             })}
           </View>
 
-          <View style={styles.lanesWrap}>
-            {Array.from({ length: 25 }, (_, index) => {
-              const top = index * 60 * PIXELS_PER_MINUTE;
+          <GestureDetector gesture={createGesture}>
+            <View style={styles.laneSurface}>
+              {Array.from({ length: 25 }, (_, index) => {
+                const top = index * 60 * PIXELS_PER_MINUTE;
 
-              return <View key={index} style={[styles.hourLine, { top }]} />;
-            })}
+                return <View key={index} style={[styles.hourLine, { top }]} />;
+              })}
 
-            <View style={[styles.laneColumn, styles.leftLane]}>{renderLaneBlocks('planned')}</View>
+              {dayKey === todayDayKey ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.nowLineWrap,
+                    { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
+                  ]}>
+                  <View style={styles.nowLine} />
+                  <Text style={styles.nowLineLabel}>Now</Text>
+                </View>
+              ) : null}
 
-            <View style={styles.laneColumn}>{renderLaneBlocks('actual')}</View>
-          </View>
+              {renderedLaneBlocks.map(({ block, dimmed }) => (
+                <Block
+                  key={block.id}
+                  id={block.id}
+                  startMin={block.startMin}
+                  endMin={block.endMin}
+                  title={block.title}
+                  tags={block.tags}
+                  lane={block.lane}
+                  onPress={handleBlockPress}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDragRelease={handleDragRelease}
+                  interactive={!dimmed}
+                  dimmed={dimmed}
+                />
+              ))}
+
+              {draftCreate ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.draftBlock,
+                    {
+                      top: draftCreate.startMin * PIXELS_PER_MINUTE,
+                      height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
+                    },
+                    draftCreate.invalid && styles.draftBlockInvalid,
+                  ]}>
+                  <Text style={styles.draftBlockText}>
+                    {formatHHMM(draftCreate.startMin)}-{formatHHMM(draftCreate.endMin)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </GestureDetector>
         </View>
       </ScrollView>
 
@@ -987,7 +1320,10 @@ export default function DayTimeline() {
                 </Text>
               </Pressable>
             ))}
-            <Pressable accessibilityLabel="Close quick add" style={styles.modalClose} onPress={() => setQuickAddVisible(false)}>
+            <Pressable
+              accessibilityLabel="Close quick add"
+              style={styles.modalClose}
+              onPress={() => setQuickAddVisible(false)}>
               <Text style={styles.modalCloseText}>Close</Text>
             </Pressable>
           </View>
@@ -1121,7 +1457,6 @@ const styles = StyleSheet.create({
   quickFilterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 8,
     marginBottom: 8,
   },
@@ -1138,15 +1473,51 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  filterPillsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+  segmentedControl: {
     flex: 1,
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 9,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
   },
-  filterPill: {
+  segmentButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+  },
+  segmentButtonSelected: {
+    backgroundColor: '#0F172A',
+  },
+  segmentButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  segmentButtonTextSelected: {
+    color: '#FFFFFF',
+  },
+  addButtonCompact: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#FFFFFF',
+  },
+  addButtonCompactText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  tagFilterRow: {
+    marginBottom: 8,
+    minHeight: 34,
+  },
+  tagFilterPill: {
+    marginRight: 6,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 14,
@@ -1165,19 +1536,6 @@ const styles = StyleSheet.create({
   },
   filterPillTextSelected: {
     color: '#FFFFFF',
-  },
-  tagFilterRow: {
-    marginBottom: 8,
-    minHeight: 34,
-  },
-  tagFilterPill: {
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#FFFFFF',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -1278,32 +1636,15 @@ const styles = StyleSheet.create({
   timeHeader: {
     width: 54,
   },
-  laneHeaderCell: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-  },
   laneHeader: {
+    flex: 1,
     textAlign: 'center',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#334155',
   },
-  addButton: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: '#FFFFFF',
-  },
-  addButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
   scrollView: {
-    flex: 1,
+    height: VIEWPORT_HEIGHT,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 10,
@@ -1331,10 +1672,10 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontVariant: ['tabular-nums'],
   },
-  lanesWrap: {
+  laneSurface: {
     flex: 1,
-    flexDirection: 'row',
     position: 'relative',
+    height: TIMELINE_HEIGHT,
   },
   hourLine: {
     position: 'absolute',
@@ -1343,13 +1684,48 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
   },
-  laneColumn: {
-    flex: 1,
-    position: 'relative',
+  nowLineWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 4,
   },
-  leftLane: {
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
+  nowLine: {
+    borderTopWidth: 1,
+    borderTopColor: '#DC2626',
+  },
+  nowLineLabel: {
+    position: 'absolute',
+    top: -9,
+    right: 8,
+    backgroundColor: '#FEE2E2',
+    color: '#991B1B',
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  draftBlock: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    borderWidth: 1,
+    borderColor: '#0F172A',
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    zIndex: 5,
+  },
+  draftBlockInvalid: {
+    borderColor: '#B91C1C',
+    backgroundColor: '#FEE2E2',
+  },
+  draftBlockText: {
+    color: '#0F172A',
+    fontSize: 11,
+    fontWeight: '600',
   },
   modalBackdrop: {
     flex: 1,
