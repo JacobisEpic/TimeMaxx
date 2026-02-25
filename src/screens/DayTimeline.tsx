@@ -227,6 +227,10 @@ export default function DayTimeline() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<EditorState>(INITIAL_EDITOR_STATE);
   const [selectedLane, setSelectedLane] = useState<Lane>('planned');
+  const [laneVisibility, setLaneVisibility] = useState<Record<Lane, boolean>>({
+    planned: true,
+    actual: false,
+  });
   const [tagFilter, setTagFilter] = useState<TagFilter>('all');
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
   const [tagBreakdownExpanded, setTagBreakdownExpanded] = useState(false);
@@ -1041,9 +1045,12 @@ export default function DayTimeline() {
     [beginDraftCreation, finalizeDraftCreation, updateDraftCreation]
   );
 
+  const compareMode = laneVisibility.planned && laneVisibility.actual;
+
   const renderedLaneBlocks = useMemo(() => {
-    return selectedLaneBlocks
-      .map((block) => {
+    const toRenderable = (lane: Lane) =>
+      sortByStartMin(sortedBlocks.filter((block) => block.lane === lane))
+        .map((block) => {
         const matches = matchesTagFilter(block, tagFilter);
 
         if (!settings.dimInsteadOfHide && !matches) {
@@ -1056,7 +1063,12 @@ export default function DayTimeline() {
         };
       })
       .filter((item): item is { block: TimeBlock; dimmed: boolean } => item !== null);
-  }, [selectedLaneBlocks, settings.dimInsteadOfHide, tagFilter]);
+
+    return {
+      planned: toRenderable('planned'),
+      actual: toRenderable('actual'),
+    };
+  }, [settings.dimInsteadOfHide, sortedBlocks, tagFilter]);
 
   const hasAnyBlocks = sortedBlocks.length > 0;
   const performanceDeltaText =
@@ -1071,6 +1083,27 @@ export default function DayTimeline() {
       : deltaMin > 0
         ? styles.performanceDeltaAhead
         : styles.performanceDeltaBehind;
+
+  const toggleLaneVisibility = useCallback((lane: Lane) => {
+    setLaneVisibility((current) => {
+      const nextValue = !current[lane];
+      const otherLane: Lane = lane === 'planned' ? 'actual' : 'planned';
+
+      if (!nextValue && !current[otherLane]) {
+        return current;
+      }
+
+      const next = { ...current, [lane]: nextValue };
+
+      if (nextValue) {
+        setSelectedLane(lane);
+      } else if (selectedLane === lane) {
+        setSelectedLane(otherLane);
+      }
+
+      return next;
+    });
+  }, [selectedLane]);
 
   return (
     <View style={styles.screen}>
@@ -1107,14 +1140,14 @@ export default function DayTimeline() {
       <View style={styles.topControlRow}>
         <View style={styles.segmentedControl}>
           {(['planned', 'actual'] as Lane[]).map((lane) => {
-            const selected = selectedLane === lane;
+            const selected = laneVisibility[lane];
 
             return (
               <Pressable
                 key={lane}
-                accessibilityLabel={`Select ${lane} lane`}
+                accessibilityLabel={`Toggle ${lane} lane`}
                 accessibilityRole="button"
-                onPress={() => setSelectedLane(lane)}
+                onPress={() => toggleLaneVisibility(lane)}
                 style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
                 <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
                   {lane === 'planned' ? 'Planned' : 'Actual'}
@@ -1149,7 +1182,13 @@ export default function DayTimeline() {
 
       <View style={styles.headerRow}>
         <View style={styles.timeHeader} />
-        <Text style={styles.laneHeader}>{selectedLane === 'planned' ? 'Planned lane' : 'Actual lane'}</Text>
+        <Text style={styles.laneHeader}>
+          {compareMode
+            ? 'Planned and actual'
+            : laneVisibility.planned
+              ? 'Planned lane'
+              : 'Actual lane'}
+        </Text>
       </View>
 
       <ScrollView
@@ -1176,62 +1215,109 @@ export default function DayTimeline() {
             })}
           </View>
 
-          <GestureDetector gesture={createGesture}>
-            <View style={styles.laneSurface}>
-              {Array.from({ length: 25 }, (_, index) => {
-                const top = index * 60 * PIXELS_PER_MINUTE;
-
-                return <View key={index} style={[styles.hourLine, { top }]} />;
-              })}
-
-              {dayKey === todayDayKey ? (
+          {compareMode ? (
+            <View style={styles.compareWrap}>
+              {(['planned', 'actual'] as Lane[]).map((lane, laneIndex) => (
                 <View
-                  pointerEvents="none"
-                  style={[
-                    styles.nowLineWrap,
-                    { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
-                  ]}>
-                  <View style={styles.nowLine} />
-                  <Text style={styles.nowLineLabel}>Now</Text>
-                </View>
-              ) : null}
+                  key={lane}
+                  style={[styles.laneSurface, styles.compareLane, laneIndex === 0 && styles.compareLaneLeft]}>
+                  {Array.from({ length: 25 }, (_, index) => {
+                    const top = index * 60 * PIXELS_PER_MINUTE;
 
-              {renderedLaneBlocks.map(({ block, dimmed }) => (
-                <Block
-                  key={block.id}
-                  id={block.id}
-                  startMin={block.startMin}
-                  endMin={block.endMin}
-                  title={block.title}
-                  tags={block.tags}
-                  lane={block.lane}
-                  onPress={handleBlockPress}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onDragRelease={handleDragRelease}
-                  interactive={!dimmed}
-                  dimmed={dimmed}
-                />
+                    return <View key={index} style={[styles.hourLine, { top }]} />;
+                  })}
+                  <Text style={styles.compareLaneLabel}>{lane === 'planned' ? 'Planned' : 'Actual'}</Text>
+
+                  {dayKey === todayDayKey ? (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.nowLineWrap,
+                        { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
+                      ]}>
+                      <View style={styles.nowLine} />
+                      <Text style={styles.nowLineLabel}>Now</Text>
+                    </View>
+                  ) : null}
+
+                  {renderedLaneBlocks[lane].map(({ block, dimmed }) => (
+                    <Block
+                      key={block.id}
+                      id={block.id}
+                      startMin={block.startMin}
+                      endMin={block.endMin}
+                      title={block.title}
+                      tags={block.tags}
+                      lane={block.lane}
+                      onPress={handleBlockPress}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                      onDragRelease={handleDragRelease}
+                      interactive={!dimmed}
+                      dimmed={dimmed}
+                    />
+                  ))}
+                </View>
               ))}
-
-              {draftCreate ? (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.draftBlock,
-                    {
-                      top: draftCreate.startMin * PIXELS_PER_MINUTE,
-                      height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
-                    },
-                    draftCreate.invalid && styles.draftBlockInvalid,
-                  ]}>
-                  <Text style={styles.draftBlockText}>
-                    {formatHHMM(draftCreate.startMin)}-{formatHHMM(draftCreate.endMin)}
-                  </Text>
-                </View>
-              ) : null}
             </View>
-          </GestureDetector>
+          ) : (
+            <GestureDetector gesture={createGesture}>
+              <View style={styles.laneSurface}>
+                {Array.from({ length: 25 }, (_, index) => {
+                  const top = index * 60 * PIXELS_PER_MINUTE;
+
+                  return <View key={index} style={[styles.hourLine, { top }]} />;
+                })}
+
+                {dayKey === todayDayKey ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.nowLineWrap,
+                      { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
+                    ]}>
+                    <View style={styles.nowLine} />
+                    <Text style={styles.nowLineLabel}>Now</Text>
+                  </View>
+                ) : null}
+
+                {renderedLaneBlocks[selectedLane].map(({ block, dimmed }) => (
+                  <Block
+                    key={block.id}
+                    id={block.id}
+                    startMin={block.startMin}
+                    endMin={block.endMin}
+                    title={block.title}
+                    tags={block.tags}
+                    lane={block.lane}
+                    onPress={handleBlockPress}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                    onDragRelease={handleDragRelease}
+                    interactive={!dimmed}
+                    dimmed={dimmed}
+                  />
+                ))}
+
+                {draftCreate ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.draftBlock,
+                      {
+                        top: draftCreate.startMin * PIXELS_PER_MINUTE,
+                        height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
+                      },
+                      draftCreate.invalid && styles.draftBlockInvalid,
+                    ]}>
+                    <Text style={styles.draftBlockText}>
+                      {formatHHMM(draftCreate.startMin)}-{formatHHMM(draftCreate.endMin)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </GestureDetector>
+          )}
         </View>
       </ScrollView>
 
@@ -1719,6 +1805,29 @@ const styles = StyleSheet.create({
     flex: 1,
     position: 'relative',
     height: TIMELINE_HEIGHT,
+  },
+  compareWrap: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  compareLane: {
+    flex: 1,
+  },
+  compareLaneLeft: {
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+  },
+  compareLaneLabel: {
+    position: 'absolute',
+    top: 6,
+    left: 8,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    zIndex: 6,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 4,
+    borderRadius: 4,
   },
   hourLine: {
     position: 'absolute',
