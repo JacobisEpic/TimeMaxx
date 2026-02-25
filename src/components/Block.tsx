@@ -3,8 +3,9 @@ import { StyleSheet, Text } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-import { getTagColor } from '@/src/constants/tags';
+import { getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
+import { formatHHMM } from '@/src/utils/time';
 
 export const PIXELS_PER_MINUTE = 1;
 
@@ -22,6 +23,8 @@ type BlockProps = {
   onDragStart: (id: string) => void;
   onDragEnd: (id: string, proposedStartMin: number) => void;
   onDragRelease: (id: string) => void;
+  onDragStep?: (id: string) => void;
+  categoryColorMap?: Record<string, string>;
   interactive?: boolean;
   dimmed?: boolean;
 };
@@ -37,16 +40,22 @@ export function Block({
   onDragStart,
   onDragEnd,
   onDragRelease,
+  onDragStep,
+  categoryColorMap,
   interactive = true,
   dimmed = false,
 }: BlockProps) {
   const durationMin = Math.max(1, endMin - startMin);
   const height = durationMin * PIXELS_PER_MINUTE;
   const primaryTag = tags[0];
+  const overrideColor = primaryTag ? categoryColorMap?.[primaryTag.toLowerCase()] : undefined;
+  const categoryColor = overrideColor ?? getCategoryColor(primaryTag);
+  const tintedFill = getCategoryTint(primaryTag);
 
   const dragDeltaMin = useSharedValue(0);
   const isDragging = useSharedValue(false);
   const gestureStarted = useSharedValue(false);
+  const lastStepDeltaMin = useSharedValue(0);
 
   const panGesture = Gesture.Pan()
     .enabled(interactive)
@@ -54,6 +63,7 @@ export function Block({
     .onStart(() => {
       gestureStarted.value = true;
       isDragging.value = true;
+      lastStepDeltaMin.value = 0;
       runOnJS(onDragStart)(id);
     })
     .onUpdate((event) => {
@@ -67,6 +77,13 @@ export function Block({
       const maxDelta = MINUTES_PER_DAY - durationMin - startMin;
 
       dragDeltaMin.value = Math.max(minDelta, Math.min(maxDelta, snappedDeltaMin));
+
+      if (dragDeltaMin.value !== lastStepDeltaMin.value) {
+        lastStepDeltaMin.value = dragDeltaMin.value;
+        if (onDragStep) {
+          runOnJS(onDragStep)(id);
+        }
+      }
     })
     .onEnd(() => {
       if (!gestureStarted.value) {
@@ -97,9 +114,9 @@ export function Block({
 
   const animatedStyle = useAnimatedStyle(() => ({
     top: (startMin + dragDeltaMin.value) * PIXELS_PER_MINUTE,
-    opacity: isDragging.value ? 0.88 : dimmed ? 0.28 : 1,
+    opacity: isDragging.value ? 0.93 : dimmed ? 0.3 : 1,
     zIndex: isDragging.value ? 30 : 1,
-    elevation: isDragging.value ? 10 : 0,
+    elevation: isDragging.value ? 4 : 0,
   }));
   const blockView = (
     <Animated.View
@@ -110,15 +127,19 @@ export function Block({
         animatedStyle,
         {
           height,
-          backgroundColor: getTagColor(primaryTag),
-          borderColor: lane === 'planned' ? '#94A3B8' : '#64748B',
+          backgroundColor: tintedFill,
+          borderColor: 'transparent',
         },
       ]}>
+      <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
       <Text numberOfLines={1} style={styles.title}>
         {title}
       </Text>
       <Text numberOfLines={1} style={styles.tag}>
-        {primaryTag ?? 'untagged'}
+        {primaryTag ?? 'uncategorized'}
+      </Text>
+      <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
+        {formatHHMM(startMin)}-{formatHHMM(endMin)}
       </Text>
     </Animated.View>
   );
@@ -136,20 +157,33 @@ const styles = StyleSheet.create({
     left: 6,
     right: 6,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    borderRadius: 9,
+    paddingLeft: 11,
+    paddingRight: 8,
+    paddingVertical: 7,
     overflow: 'hidden',
+  },
+  spine: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
   title: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#0F172A',
+    color: '#1F2937',
   },
   tag: {
-    marginTop: 2,
+    marginTop: 1,
     fontSize: 10,
-    color: '#334155',
+    color: '#6B7280',
     textTransform: 'capitalize',
+  },
+  timeText: {
+    marginTop: 1,
+    fontSize: 9,
+    fontWeight: '500',
   },
 });

@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 import type { Block, Lane } from '@/src/types/blocks';
 
 const DB_NAME = 'plan-vs-actual.db';
-const SCHEMA_VERSION = '1';
+const SCHEMA_VERSION = '2';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initPromise: Promise<void> | null = null;
@@ -54,6 +54,7 @@ type BlockRow = {
   endMin: number;
   title: string;
   tagsJson: string;
+  linkedPlannedId: string | null;
 };
 
 function mapRowToBlock(row: BlockRow): Block | null {
@@ -70,6 +71,7 @@ function mapRowToBlock(row: BlockRow): Block | null {
     endMin: row.endMin,
     title: row.title,
     tags: parseTags(row.tagsJson),
+    linkedPlannedId: lane === 'actual' ? row.linkedPlannedId : undefined,
   };
 }
 
@@ -91,6 +93,7 @@ export async function initDb(): Promise<void> {
         endMin INTEGER NOT NULL,
         title TEXT NOT NULL,
         tagsJson TEXT NOT NULL,
+        linkedPlannedId TEXT NULL,
         updatedAt INTEGER NOT NULL
       );
 
@@ -102,6 +105,13 @@ export async function initDb(): Promise<void> {
         value TEXT NOT NULL
       );
     `);
+
+    const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(blocks);');
+    const hasLinkedPlannedId = columns.some((column) => column.name === 'linkedPlannedId');
+
+    if (!hasLinkedPlannedId) {
+      await db.execAsync('ALTER TABLE blocks ADD COLUMN linkedPlannedId TEXT NULL;');
+    }
 
     await db.runAsync(
       'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);',
@@ -117,7 +127,7 @@ export async function getBlocksForDay(dayKey: string): Promise<Block[]> {
   await initDb();
   const db = await getDb();
   const rows = await db.getAllAsync<BlockRow>(
-    `SELECT id, lane, startMin, endMin, title, tagsJson
+    `SELECT id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
      FROM blocks
      WHERE dayKey = ?
      ORDER BY lane ASC, startMin ASC, id ASC;`,
@@ -139,8 +149,8 @@ export async function insertBlock(
   const now = Date.now();
 
   await db.runAsync(
-    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
     id,
     dayKey,
     input.lane,
@@ -148,6 +158,7 @@ export async function insertBlock(
     input.endMin,
     input.title,
     JSON.stringify(input.tags),
+    input.lane === 'actual' ? input.linkedPlannedId ?? null : null,
     now
   );
 
@@ -158,6 +169,7 @@ export async function insertBlock(
     endMin: input.endMin,
     title: input.title,
     tags: input.tags,
+    linkedPlannedId: input.lane === 'actual' ? input.linkedPlannedId ?? null : undefined,
   };
 }
 
@@ -168,13 +180,14 @@ export async function updateBlock(block: Block, dayKey: string): Promise<void> {
 
   await db.runAsync(
     `UPDATE blocks
-      SET lane = ?, startMin = ?, endMin = ?, title = ?, tagsJson = ?, updatedAt = ?
+      SET lane = ?, startMin = ?, endMin = ?, title = ?, tagsJson = ?, linkedPlannedId = ?, updatedAt = ?
       WHERE id = ? AND dayKey = ?;`,
     block.lane,
     block.startMin,
     block.endMin,
     block.title,
     JSON.stringify(block.tags),
+    block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
     now,
     block.id,
     dayKey

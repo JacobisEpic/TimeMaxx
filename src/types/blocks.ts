@@ -7,4 +7,5 @@ export type Block = {
   title: string;
   tags: string[];
   lane: Lane;
+  linkedPlannedId?: string | null;
 };
