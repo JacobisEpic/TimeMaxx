@@ -6,7 +6,8 @@ export type AppSettings = {
   plannedScanStartMin: number;
   actualScanStartMin: number;
   dimInsteadOfHide: boolean;
-  categories: Array<{ id: string; label: string; color: string }>;
+  debugMode: boolean;
+  categories: { id: string; label: string; color: string }[];
 };
 
 type AppSettingsContextValue = {
@@ -16,12 +17,14 @@ type AppSettingsContextValue = {
   refreshSettings: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
   resetAllData: () => Promise<void>;
+  signalDataChanged: () => void;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
   plannedScanStartMin: 9 * 60,
   actualScanStartMin: 12 * 60,
   dimInsteadOfHide: false,
+  debugMode: false,
   categories: [
     { id: 'work', label: 'Work', color: '#3B82F6' },
     { id: 'focus', label: 'Deep Focus', color: '#8B5CF6' },
@@ -37,6 +40,7 @@ const META_KEYS = {
   plannedScanStartMin: 'settings_planned_scan_start_min',
   actualScanStartMin: 'settings_actual_scan_start_min',
   dimInsteadOfHide: 'settings_dim_instead_of_hide',
+  debugMode: 'settings_debug_mode',
   categories: 'settings_categories',
 } as const;
 
@@ -113,10 +117,11 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [dataVersion, setDataVersion] = useState(0);
 
   const refreshSettings = useCallback(async () => {
-    const [plannedRaw, actualRaw, dimRaw, categoriesRaw] = await Promise.all([
+    const [plannedRaw, actualRaw, dimRaw, debugRaw, categoriesRaw] = await Promise.all([
       getMetaValue(META_KEYS.plannedScanStartMin),
       getMetaValue(META_KEYS.actualScanStartMin),
       getMetaValue(META_KEYS.dimInsteadOfHide),
+      getMetaValue(META_KEYS.debugMode),
       getMetaValue(META_KEYS.categories),
     ]);
 
@@ -124,6 +129,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       plannedScanStartMin: parseMinuteSetting(plannedRaw, DEFAULT_SETTINGS.plannedScanStartMin),
       actualScanStartMin: parseMinuteSetting(actualRaw, DEFAULT_SETTINGS.actualScanStartMin),
       dimInsteadOfHide: parseBooleanSetting(dimRaw, DEFAULT_SETTINGS.dimInsteadOfHide),
+      debugMode: parseBooleanSetting(debugRaw, DEFAULT_SETTINGS.debugMode),
       categories: parseCategoriesSetting(categoriesRaw, DEFAULT_SETTINGS.categories),
     });
   }, []);
@@ -149,6 +155,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
         setMetaValue(META_KEYS.plannedScanStartMin, String(nextSettings.plannedScanStartMin)),
         setMetaValue(META_KEYS.actualScanStartMin, String(nextSettings.actualScanStartMin)),
         setMetaValue(META_KEYS.dimInsteadOfHide, nextSettings.dimInsteadOfHide ? '1' : '0'),
+        setMetaValue(META_KEYS.debugMode, nextSettings.debugMode ? '1' : '0'),
         setMetaValue(META_KEYS.categories, JSON.stringify(nextSettings.categories)),
       ]);
 
@@ -162,6 +169,10 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     setDataVersion((current) => current + 1);
   }, []);
 
+  const signalDataChanged = useCallback(() => {
+    setDataVersion((current) => current + 1);
+  }, []);
+
   const value = useMemo(
     () => ({
       settings,
@@ -170,8 +181,9 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       refreshSettings,
       updateSettings,
       resetAllData,
+      signalDataChanged,
     }),
-    [settings, loading, dataVersion, refreshSettings, updateSettings, resetAllData]
+    [settings, loading, dataVersion, refreshSettings, updateSettings, resetAllData, signalDataChanged]
   );
 
   return <AppSettingsContext.Provider value={value}>{children}</AppSettingsContext.Provider>;

@@ -3,19 +3,31 @@ import { StyleSheet, Text } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-import { getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
+import { UI_COLORS, getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
-import { formatHHMM } from '@/src/utils/time';
 
 export const PIXELS_PER_MINUTE = 1;
 
 const MINUTES_PER_DAY = 24 * 60;
 const SNAP_INTERVAL_MINUTES = 15;
 
+function formatAmPm(min: number): string {
+  const rounded = Math.max(0, Math.min(MINUTES_PER_DAY, Math.round(min)));
+  const safe = rounded === MINUTES_PER_DAY ? 0 : rounded;
+  const hours24 = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+
+  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`;
+}
+
 type BlockProps = {
   id: string;
   startMin: number;
   endMin: number;
+  previewStartMin?: number;
+  previewEndMin?: number;
   title: string;
   tags: string[];
   lane: Lane;
@@ -24,6 +36,9 @@ type BlockProps = {
   onDragEnd: (id: string, proposedStartMin: number) => void;
   onDragRelease: (id: string) => void;
   onDragStep?: (id: string) => void;
+  onDragPreview?: (id: string, previewStartMin: number, previewEndMin: number) => void;
+  onFocusStart?: (id: string) => void;
+  onFocusEnd?: (id: string) => void;
   categoryColorMap?: Record<string, string>;
   interactive?: boolean;
   dimmed?: boolean;
@@ -33,6 +48,8 @@ export function Block({
   id,
   startMin,
   endMin,
+  previewStartMin,
+  previewEndMin,
   title,
   tags,
   lane,
@@ -41,6 +58,9 @@ export function Block({
   onDragEnd,
   onDragRelease,
   onDragStep,
+  onDragPreview,
+  onFocusStart,
+  onFocusEnd,
   categoryColorMap,
   interactive = true,
   dimmed = false,
@@ -59,7 +79,7 @@ export function Block({
 
   const panGesture = Gesture.Pan()
     .enabled(interactive)
-    .activateAfterLongPress(220)
+    .activateAfterLongPress(320)
     .onStart(() => {
       gestureStarted.value = true;
       isDragging.value = true;
@@ -77,6 +97,9 @@ export function Block({
       const maxDelta = MINUTES_PER_DAY - durationMin - startMin;
 
       dragDeltaMin.value = Math.max(minDelta, Math.min(maxDelta, snappedDeltaMin));
+      if (onDragPreview) {
+        runOnJS(onDragPreview)(id, startMin + dragDeltaMin.value, endMin + dragDeltaMin.value);
+      }
 
       if (dragDeltaMin.value !== lastStepDeltaMin.value) {
         lastStepDeltaMin.value = dragDeltaMin.value;
@@ -100,6 +123,9 @@ export function Block({
       gestureStarted.value = false;
       isDragging.value = false;
       dragDeltaMin.value = 0;
+      if (onDragPreview) {
+        runOnJS(onDragPreview)(id, startMin, endMin);
+      }
     });
 
   const tapGesture = Gesture.Tap()
@@ -110,7 +136,22 @@ export function Block({
       }
     });
 
-  const composedGesture = Gesture.Exclusive(panGesture, tapGesture);
+  const focusGesture = Gesture.LongPress()
+    .enabled(interactive)
+    .minDuration(220)
+    .maxDistance(8)
+    .onStart(() => {
+      if (onFocusStart) {
+        runOnJS(onFocusStart)(id);
+      }
+    })
+    .onFinalize(() => {
+      if (onFocusEnd && !isDragging.value) {
+        runOnJS(onFocusEnd)(id);
+      }
+    });
+
+  const composedGesture = Gesture.Simultaneous(Gesture.Exclusive(panGesture, tapGesture), focusGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
     top: (startMin + dragDeltaMin.value) * PIXELS_PER_MINUTE,
@@ -118,6 +159,8 @@ export function Block({
     zIndex: isDragging.value ? 30 : 1,
     elevation: isDragging.value ? 4 : 0,
   }));
+  const shownStartMin = previewStartMin ?? startMin;
+  const shownEndMin = previewEndMin ?? endMin;
   const blockView = (
     <Animated.View
       accessible
@@ -128,7 +171,7 @@ export function Block({
         {
           height,
           backgroundColor: tintedFill,
-          borderColor: 'transparent',
+          borderColor: UI_COLORS.glassStrokeSoft,
         },
       ]}>
       <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
@@ -139,7 +182,7 @@ export function Block({
         {primaryTag ?? 'uncategorized'}
       </Text>
       <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
-        {formatHHMM(startMin)}-{formatHHMM(endMin)}
+        {formatAmPm(shownStartMin)}-{formatAmPm(shownEndMin)}
       </Text>
     </Animated.View>
   );
@@ -157,10 +200,10 @@ const styles = StyleSheet.create({
     left: 6,
     right: 6,
     borderWidth: 1,
-    borderRadius: 9,
-    paddingLeft: 11,
+    borderRadius: 8,
+    paddingLeft: 10,
     paddingRight: 8,
-    paddingVertical: 7,
+    paddingVertical: 6,
     overflow: 'hidden',
   },
   spine: {

@@ -1,7 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Keyboard,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
@@ -185,16 +194,39 @@ export function BlockEditorModal({
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.backdrop}>
         <Pressable style={styles.dismissLayer} onPress={onCancel} />
-        <View style={styles.card}>
-          <View style={styles.grabber} />
-          <View style={styles.headerRow}>
-            <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>
-            <Pressable accessibilityLabel="Close editor" style={styles.closeButton} onPress={onCancel}>
-              <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
-            </Pressable>
-          </View>
+        <View style={styles.keyboardLift}>
+          <View style={styles.card}>
+            <View style={styles.grabber} />
+            <View style={styles.headerRow}>
+              <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>
+              <Pressable accessibilityLabel="Close editor" style={styles.closeButton} onPress={onCancel}>
+                <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+              </Pressable>
+            </View>
+            <View style={styles.headerLaneRow}>
+              {(['planned', 'actual'] as Lane[]).map((value) => {
+                const selected = lane === value;
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formBody}>
+                return (
+                  <Pressable
+                    key={`header-${value}`}
+                    accessibilityLabel={`Set type ${value === 'planned' ? 'plan' : 'done'}`}
+                    style={[styles.headerLaneChip, selected && styles.headerLaneChipSelected]}
+                    onPress={() => onChangeLane(value)}>
+                    <Text style={[styles.headerLaneChipText, selected && styles.headerLaneChipTextSelected]}>
+                      {value === 'planned' ? 'Plan' : 'Done'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.formBody}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              onScrollBeginDrag={() => Keyboard.dismiss()}>
             <Text style={styles.label}>Title</Text>
             <TextInput
               value={titleValue}
@@ -225,57 +257,38 @@ export function BlockEditorModal({
               })}
             </View>
 
-            <Text style={styles.label}>Type</Text>
-            <View style={styles.typeRow}>
-              {(['planned', 'actual'] as Lane[]).map((value) => {
-                const selected = lane === value;
-
-                return (
-                  <Pressable
-                    key={value}
-                    accessibilityLabel={`Set type ${value}`}
-                    style={[styles.typeChip, selected && styles.typeChipSelected]}
-                    onPress={() => onChangeLane(value)}>
-                    <Text style={[styles.typeChipText, selected && styles.typeChipTextSelected]}>
-                      {value === 'planned' ? 'Plan' : 'Actual'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <View style={styles.timeTitleRow}>
-              <Text style={styles.label}>Start Time</Text>
-              <Text style={styles.label}>End Time</Text>
-            </View>
             <View style={styles.timeControlRow}>
-              <View style={styles.startControlGroup}>
-                <Pressable style={styles.dropdown} onPress={() => setPickerType('startTime')}>
-                  <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedHour]?.label ?? '8 AM'}</Text>
-                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
-                <Text style={styles.timeColon}>:</Text>
-                <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('startTime')}>
-                  <Text style={styles.dropdownText}>{String(selectedMinute).padStart(2, '0')}</Text>
-                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
+              <View style={styles.timeColumn}>
+                <Text style={styles.label}>Start Time</Text>
+                <View style={styles.startControlGroup}>
+                  <Pressable style={styles.dropdown} onPress={() => setPickerType('startTime')}>
+                    <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedHour]?.label ?? '8 AM'}</Text>
+                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                  </Pressable>
+                  <Text style={styles.timeColon}>:</Text>
+                  <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('startTime')}>
+                    <Text style={styles.dropdownText}>{String(selectedMinute).padStart(2, '0')}</Text>
+                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                  </Pressable>
+                </View>
               </View>
-              <View style={styles.startControlGroup}>
-                <Pressable style={styles.dropdown} onPress={() => setPickerType('endTime')}>
-                  <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedEndHour]?.label ?? '9 AM'}</Text>
-                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
-                <Text style={styles.timeColon}>:</Text>
-                <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('endTime')}>
-                  <Text style={styles.dropdownText}>{String(selectedEndMinute).padStart(2, '0')}</Text>
-                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
+              <View style={styles.timeColumn}>
+                <Text style={styles.label}>End Time</Text>
+                <View style={styles.startControlGroup}>
+                  <Pressable style={styles.dropdown} onPress={() => setPickerType('endTime')}>
+                    <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedEndHour]?.label ?? '9 AM'}</Text>
+                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                  </Pressable>
+                  <Text style={styles.timeColon}>:</Text>
+                  <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('endTime')}>
+                    <Text style={styles.dropdownText}>{String(selectedEndMinute).padStart(2, '0')}</Text>
+                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                  </Pressable>
+                </View>
               </View>
             </View>
 
-            <View style={styles.timeTitleRow}>
-              <Text style={styles.label}>Duration</Text>
-            </View>
+            <Text style={[styles.label, styles.durationLabel]}>Duration</Text>
             <View style={styles.timeControlRow}>
               <Pressable style={styles.durationControl} onPress={() => setPickerType('duration')}>
                 <Text style={styles.dropdownText}>{toDurationLabel(timeState.durationMin)}</Text>
@@ -285,9 +298,9 @@ export function BlockEditorModal({
 
             {lane === 'actual' ? (
               <View style={styles.linkSection}>
-                <Text style={styles.label}>Linked to</Text>
+                <Text style={styles.label}>Counts toward</Text>
                 <Pressable
-                  accessibilityLabel="Select linked planned block"
+                accessibilityLabel="Select plan block this counts toward"
                   accessibilityRole="button"
                   style={[styles.linkRow, linkControlDisabled && styles.linkRowDisabled]}
                   onPress={() => setLinkPickerVisible(true)}
@@ -301,7 +314,7 @@ export function BlockEditorModal({
             ) : null}
 
             <Text style={styles.errorText}>{errorText ?? ' '}</Text>
-
+            </ScrollView>
             <View style={styles.footerRow}>
               {mode === 'edit' ? (
                 <Pressable
@@ -316,10 +329,10 @@ export function BlockEditorModal({
                 style={[styles.primaryButton, saveDisabled && styles.primaryButtonDisabled]}
                 onPress={onSave}
                 disabled={saveDisabled}>
-                <Text style={styles.primaryButtonText}>{mode === 'create' ? 'Add Block' : 'Save Block'}</Text>
+                <Text style={styles.primaryButtonText}>{mode === 'create' ? 'Add' : 'Save'}</Text>
               </Pressable>
             </View>
-          </ScrollView>
+          </View>
         </View>
       </View>
 
@@ -331,9 +344,9 @@ export function BlockEditorModal({
         <View style={styles.pickerBackdrop}>
           <Pressable style={styles.pickerDismissLayer} onPress={() => setLinkPickerVisible(false)} />
           <View style={styles.pickerCard}>
-            <Text style={styles.pickerTitle}>Link Actual Block</Text>
+            <Text style={styles.pickerTitle}>Counts Toward</Text>
             <Pressable
-              accessibilityLabel="Unlink planned block"
+              accessibilityLabel="Clear plan linkage"
               style={styles.pickerRow}
               onPress={() => {
                 onChangeLinkedPlannedId(null);
@@ -348,7 +361,7 @@ export function BlockEditorModal({
                 return (
                   <Pressable
                     key={option.id}
-                    accessibilityLabel={`Link to ${option.title}`}
+                    accessibilityLabel={`Count toward ${option.title}`}
                     style={[styles.pickerRow, selected && styles.pickerRowSelected]}
                     onPress={() => {
                       onChangeLinkedPlannedId(option.id);
@@ -453,6 +466,9 @@ const styles = StyleSheet.create({
   dismissLayer: {
     flex: 1,
   },
+  keyboardLift: {
+    justifyContent: 'flex-end',
+  },
   card: {
     backgroundColor: UI_COLORS.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
@@ -466,6 +482,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 14,
     elevation: 10,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
   },
   grabber: {
     alignSelf: 'center',
@@ -479,7 +497,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
+  },
+  headerLaneRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  headerLaneChip: {
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: UI_COLORS.surfaceMuted,
+  },
+  headerLaneChipSelected: {
+    backgroundColor: UI_COLORS.surface,
+    borderColor: UI_COLORS.neutralText,
+  },
+  headerLaneChipText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  headerLaneChipTextSelected: {
+    color: UI_COLORS.neutralText,
   },
   headerText: {
     color: UI_COLORS.neutralText,
@@ -491,12 +534,14 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 10,
     backgroundColor: UI_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   formBody: {
     gap: 10,
-    paddingBottom: 8,
+    paddingBottom: 12,
   },
   label: {
     fontSize: UI_TYPE.body,
@@ -547,42 +592,18 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  typeRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  typeChip: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    borderRadius: UI_RADIUS.control,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: UI_COLORS.surface,
-  },
-  typeChipSelected: {
-    borderColor: UI_COLORS.neutralText,
-    backgroundColor: '#F9FAFB',
-  },
-  typeChipText: {
-    color: UI_COLORS.neutralTextSoft,
-    fontWeight: '700',
-  },
-  typeChipTextSelected: {
-    color: UI_COLORS.neutralText,
-  },
-  timeTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
   timeControlRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 10,
   },
+  durationLabel: {
+    marginTop: 4,
+  },
+  timeColumn: {
+    flex: 1,
+    gap: 6,
+  },
   startControlGroup: {
-    flex: 1.5,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -668,7 +689,11 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 2,
+    marginTop: 4,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
   },
   secondaryButton: {
     borderRadius: UI_RADIUS.control,
@@ -677,6 +702,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 16,
     backgroundColor: UI_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
   },
   deleteButton: {
     backgroundColor: '#FEE2E2',
@@ -689,7 +716,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 46,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.neutralText,
+    backgroundColor: 'rgba(17, 24, 39, 0.9)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -717,6 +744,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 6,
     maxHeight: '70%',
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
   },
   pickerTitle: {
     color: UI_COLORS.neutralText,
@@ -748,6 +777,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
     backgroundColor: UI_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
   },
   pickerDoneText: {
     color: UI_COLORS.neutralText,

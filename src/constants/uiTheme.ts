@@ -2,6 +2,11 @@ export const UI_COLORS_LIGHT = {
   appBackground: '#F6F7F9',
   surface: '#FFFFFF',
   surfaceMuted: '#F2F3F5',
+  glassSurface: 'rgba(255, 255, 255, 0.62)',
+  glassSurfaceStrong: 'rgba(255, 255, 255, 0.76)',
+  glassStroke: 'rgba(255, 255, 255, 0.72)',
+  glassStrokeSoft: 'rgba(148, 163, 184, 0.28)',
+  glassHighlight: 'rgba(255, 255, 255, 0.65)',
   neutralBorder: '#E4E7EC',
   neutralText: '#111827',
   neutralTextSoft: '#6B7280',
@@ -20,6 +25,11 @@ export const UI_COLORS_DARK = {
   appBackground: '#0B0D11',
   surface: '#12151B',
   surfaceMuted: '#181C23',
+  glassSurface: 'rgba(28, 33, 43, 0.62)',
+  glassSurfaceStrong: 'rgba(28, 33, 43, 0.76)',
+  glassStroke: 'rgba(148, 163, 184, 0.3)',
+  glassStrokeSoft: 'rgba(148, 163, 184, 0.2)',
+  glassHighlight: 'rgba(255, 255, 255, 0.12)',
   neutralBorder: '#232934',
   neutralText: '#F9FAFB',
   neutralTextSoft: '#9CA3AF',
@@ -75,7 +85,7 @@ export function getCategoryColor(tag?: string): string {
 }
 
 export function getCategoryTint(tag?: string): string {
-  return withAlpha(getCategoryColor(tag), '22');
+  return withAlpha(getCategoryColor(tag), '1C');
 }
 
 export function getCategoryBorder(tag?: string): string {

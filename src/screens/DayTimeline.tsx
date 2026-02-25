@@ -66,6 +66,10 @@ type DraftCandidate = {
 
 const MINUTES_PER_DAY = 24 * 60;
 const TIMELINE_HEIGHT = MINUTES_PER_DAY * PIXELS_PER_MINUTE;
+const TIME_GUTTER_WIDTH = 54;
+const NOW_BUBBLE_HEIGHT = 20;
+const NOW_COLOR = '#FF3B30';
+const NOW_LINE_CONNECT_OFFSET = 4;
 const DEFAULT_VIEWPORT_HOURS = 10;
 const VIEWPORT_HEIGHT = DEFAULT_VIEWPORT_HOURS * 60 * PIXELS_PER_MINUTE;
 const FEEDBACK_DURATION_MS = 1500;
@@ -111,6 +115,31 @@ function formatHourLabel(hour: number): string {
   }
 
   return `${hour - 12} PM`;
+}
+
+function getNextQuarterMinuteFromNow(): number {
+  const now = new Date();
+  const minute = now.getHours() * 60 + now.getMinutes();
+  const nextQuarter = Math.ceil(minute / 15) * 15;
+  return clamp(nextQuarter, 0, MINUTES_PER_DAY - 15);
+}
+
+function formatCurrentTimeLabel(min: number): string {
+  const safe = clamp(Math.round(min), 0, MINUTES_PER_DAY - 1);
+  const hour24 = Math.floor(safe / 60);
+  const minute = safe % 60;
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(minute).padStart(2, '0')}`;
+}
+
+function formatAmPm(min: number): string {
+  const rounded = Math.max(0, Math.min(MINUTES_PER_DAY, Math.round(min)));
+  const safe = rounded === MINUTES_PER_DAY ? 0 : rounded;
+  const hours24 = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`;
 }
 
 function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
@@ -241,6 +270,11 @@ function getCategoryKey(block: TimeBlock): string {
   return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
 }
 
+function toSingleCategory(tags: string[]): string[] {
+  const first = tags[0]?.trim().toLowerCase();
+  return first ? [first] : [];
+}
+
 function findEarliestSlot(
   lane: Lane,
   durationMin: number,
@@ -292,6 +326,22 @@ function minuteFromGestureY(y: number): number | null {
   return clamp(roundTo15(minute), 0, MINUTES_PER_DAY - 15);
 }
 
+async function triggerSelectionHaptic(): Promise<void> {
+  try {
+    await Haptics.selectionAsync();
+  } catch {
+    // Ignore platform/runtime haptics failures during gesture interactions.
+  }
+}
+
+async function triggerSuccessHaptic(): Promise<void> {
+  try {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  } catch {
+    // Ignore platform/runtime haptics failures during gesture interactions.
+  }
+}
+
 export default function DayTimeline() {
   const router = useRouter();
   const { settings, loading: settingsLoading, updateSettings, dataVersion } = useAppSettings();
@@ -303,6 +353,7 @@ export default function DayTimeline() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<EditorState>(INITIAL_EDITOR_STATE);
   const [selectedLane, setSelectedLane] = useState<Lane>('planned');
+  const [lastUsedCreateLane, setLastUsedCreateLane] = useState<Lane>('planned');
   const [laneVisibility, setLaneVisibility] = useState<Record<Lane, boolean>>({
     planned: true,
     actual: false,
@@ -314,7 +365,9 @@ export default function DayTimeline() {
   const [quickAddExpanded, setQuickAddExpanded] = useState(false);
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const [dragPreviewById, setDragPreviewById] = useState<Record<string, { startMin: number; endMin: number }>>({});
   const draftCreateRef = useRef<DraftCreateState | null>(null);
+  const createHapticKeyRef = useRef<string | null>(null);
   const draftCandidateRef = useRef<DraftCandidate | null>(null);
   const finalizeHandledRef = useRef(false);
   const createGestureBlockedRef = useRef(false);
@@ -521,6 +574,7 @@ export default function DayTimeline() {
       setActiveDragId(null);
       setFocusedPlannedId(null);
       setDraftCreate(null);
+      setDragPreviewById({});
       draftCreateRef.current = null;
       draftCandidateRef.current = null;
       setIsCreatingDraft(false);
@@ -572,6 +626,14 @@ export default function DayTimeline() {
     return () => clearTimeout(timer);
   }, [dayKey, syncTimelineViewportTop]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setReloadTick((current) => current + 1);
+    }, 60_000);
+
+    return () => clearInterval(timer);
+  }, []);
+
   const showFeedback = useCallback((message: string) => {
     if (feedbackTimerRef.current) {
       clearTimeout(feedbackTimerRef.current);
@@ -587,8 +649,8 @@ export default function DayTimeline() {
 
   const openCreateEditor = useCallback(
     (lane: Lane, presetRange?: { startMin: number; endMin: number }) => {
-      const defaultStart =
-        lane === 'planned' ? settings.plannedScanStartMin : settings.actualScanStartMin;
+      setLastUsedCreateLane(lane);
+      const defaultStart = getNextQuarterMinuteFromNow();
       const startMin = presetRange?.startMin ?? clamp(roundTo15(defaultStart), 0, MINUTES_PER_DAY - 15);
       const endMin = presetRange?.endMin ?? Math.min(MINUTES_PER_DAY, startMin + 60);
 
@@ -605,7 +667,7 @@ export default function DayTimeline() {
         errorText: null,
       });
     },
-    [settings.actualScanStartMin, settings.plannedScanStartMin]
+    []
   );
 
   const openEditEditor = useCallback((block: TimeBlock) => {
@@ -615,7 +677,7 @@ export default function DayTimeline() {
       lane: block.lane,
       blockId: block.id,
       title: block.title,
-      tags: [...block.tags],
+      tags: toSingleCategory(block.tags),
       startText: formatHHMM(block.startMin),
       endText: formatHHMM(block.endMin),
       linkedPlannedId: block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
@@ -651,11 +713,36 @@ export default function DayTimeline() {
   }, []);
 
   const handleDragRelease = useCallback((blockId: string) => {
+    setFocusedPlannedId(null);
     setActiveDragId((current) => (current === blockId ? null : current));
+    setDragPreviewById((current) => {
+      if (!(blockId in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[blockId];
+      return next;
+    });
   }, []);
 
   const handleDragStep = useCallback(() => {
-    void Haptics.selectionAsync();
+    setFocusedPlannedId(null);
+    void triggerSelectionHaptic();
+  }, []);
+
+  const handleDragPreview = useCallback((blockId: string, startMin: number, endMin: number) => {
+    setDragPreviewById((current) => {
+      const existing = current[blockId];
+      if (existing && existing.startMin === startMin && existing.endMin === endMin) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [blockId]: { startMin, endMin },
+      };
+    });
   }, []);
 
   const handleDragEnd = useCallback(
@@ -673,10 +760,20 @@ export default function DayTimeline() {
 
       if (hasOverlap(draggedBlock.lane, blockId, clampedStartMin, nextEndMin, sortedBlocks)) {
         showFeedback('Time overlaps another block');
+        setDragPreviewById((current) => {
+          const next = { ...current };
+          delete next[blockId];
+          return next;
+        });
         return;
       }
 
       if (clampedStartMin === draggedBlock.startMin) {
+        setDragPreviewById((current) => {
+          const next = { ...current };
+          delete next[blockId];
+          return next;
+        });
         return;
       }
 
@@ -692,7 +789,12 @@ export default function DayTimeline() {
           setBlocks((current) =>
             sortByStartMin(current.map((block) => (block.id === blockId ? updatedBlock : block)))
           );
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setDragPreviewById((current) => {
+            const next = { ...current };
+            delete next[blockId];
+            return next;
+          });
+          void triggerSuccessHaptic();
         } catch {
           Alert.alert('Storage error', 'Could not save drag change.');
         }
@@ -713,15 +815,35 @@ export default function DayTimeline() {
         return;
       }
 
-      if (block.lane === 'planned') {
-        setFocusedPlannedId((current) => (current === block.id ? null : block.id));
-        return;
-      }
-
       openEditEditor(block);
     },
     [activeDragId, isCreatingDraft, openEditEditor, sortedBlocks]
   );
+
+  const handleBlockFocusStart = useCallback(
+    (blockId: string) => {
+      if (activeDragId !== null || isCreatingDraft) {
+        return;
+      }
+
+      const block = sortedBlocks.find((item) => item.id === blockId);
+      if (!block) {
+        return;
+      }
+
+      if (block.lane === 'planned') {
+        setFocusedPlannedId(block.id);
+        return;
+      }
+
+      setFocusedPlannedId(block.linkedPlannedId ?? null);
+    },
+    [activeDragId, isCreatingDraft, sortedBlocks]
+  );
+
+  const handleBlockFocusEnd = useCallback(() => {
+    setFocusedPlannedId(null);
+  }, []);
 
   const setEditorField = useCallback((field: keyof EditorState, value: string) => {
     setEditorState((current) => ({ ...current, [field]: value, errorText: null }));
@@ -739,13 +861,11 @@ export default function DayTimeline() {
   const toggleEditorTag = useCallback((tag: string) => {
     setEditorState((current) => {
       const normalized = tag.toLowerCase();
-      const hasTag = current.tags.map((item) => item.toLowerCase()).includes(normalized);
+      const selected = current.tags[0]?.toLowerCase() === normalized;
 
       return {
         ...current,
-        tags: hasTag
-          ? current.tags.filter((item) => item.toLowerCase() !== normalized)
-          : [...current.tags, normalized],
+        tags: selected ? [] : [normalized],
         errorText: null,
       };
     });
@@ -833,7 +953,7 @@ export default function DayTimeline() {
       const updatedBlock: TimeBlock = {
         ...existing,
         title,
-        tags: editorState.tags.map((tag) => tag.toLowerCase()),
+        tags: toSingleCategory(editorState.tags),
         startMin,
         endMin,
         linkedPlannedId: existing.lane === 'actual' ? normalizedLinkedPlannedId : undefined,
@@ -845,7 +965,7 @@ export default function DayTimeline() {
           setBlocks((current) =>
             sortByStartMin(current.map((block) => (block.id === updatedBlock.id ? updatedBlock : block)))
           );
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          void triggerSuccessHaptic();
           closeEditor();
         } catch {
           Alert.alert('Storage error', 'Could not save block changes.');
@@ -863,7 +983,7 @@ export default function DayTimeline() {
     const newBlockInput: Omit<TimeBlock, 'id'> = {
       lane: editorState.lane,
       title,
-      tags: editorState.tags.map((tag) => tag.toLowerCase()),
+      tags: toSingleCategory(editorState.tags),
       startMin,
       endMin,
       linkedPlannedId: editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined,
@@ -873,7 +993,8 @@ export default function DayTimeline() {
       try {
         const insertedBlock = await insertBlock(newBlockInput, dayKey);
         setBlocks((current) => sortByStartMin([...current, insertedBlock]));
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setLastUsedCreateLane(editorState.lane);
+        void triggerSuccessHaptic();
         closeEditor();
       } catch {
         Alert.alert('Storage error', 'Could not create block.');
@@ -913,8 +1034,7 @@ export default function DayTimeline() {
 
   const handleQuickAdd = useCallback(
     (preset: QuickPreset) => {
-      const preferredStartMin =
-        preset.lane === 'planned' ? settings.plannedScanStartMin : settings.actualScanStartMin;
+      const preferredStartMin = getNextQuarterMinuteFromNow();
 
       const slot = findEarliestSlot(preset.lane, preset.durationMin, preferredStartMin, sortedBlocks);
 
@@ -943,7 +1063,7 @@ export default function DayTimeline() {
         }
       })();
     },
-    [dayKey, openEditEditor, settings.actualScanStartMin, settings.plannedScanStartMin, sortedBlocks]
+    [dayKey, openEditEditor, sortedBlocks]
   );
 
   const copyPlannedToActual = useCallback(() => {
@@ -980,7 +1100,7 @@ export default function DayTimeline() {
         Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
       } catch {
         reloadCurrentDay();
-        Alert.alert('Storage error', 'Could not finish copy planned to actual.');
+        Alert.alert('Storage error', 'Could not finish copy plan to done.');
       }
     })();
   }, [dayKey, reloadCurrentDay, sortedBlocks]);
@@ -1028,20 +1148,10 @@ export default function DayTimeline() {
         Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
       } catch {
         reloadCurrentDay();
-        Alert.alert('Storage error', 'Could not copy yesterday planned blocks.');
+        Alert.alert('Storage error', 'Could not copy yesterday plan blocks.');
       }
     })();
   }, [isViewingToday, reloadCurrentDay, sortedBlocks, todayDayKey]);
-
-  const setDimMode = useCallback((value: boolean) => {
-    void (async () => {
-      try {
-        await updateSettings({ dimInsteadOfHide: value });
-      } catch {
-        Alert.alert('Settings error', 'Could not update dim mode setting.');
-      }
-    })();
-  }, [updateSettings]);
 
   const shareDaySummary = useCallback(() => {
     const plannedBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
@@ -1051,7 +1161,7 @@ export default function DayTimeline() {
       ? tagTotals
           .map(
             (row) =>
-              `${row.tag}: planned ${formatDuration(row.plannedMin)}, actual ${formatDuration(
+              `${row.tag}: plan ${formatDuration(row.plannedMin)}, done ${formatDuration(
                 row.actualMin
               )}, delta ${row.deltaMin >= 0 ? '+' : '-'}${formatDuration(row.deltaMin)}`
           )
@@ -1063,17 +1173,17 @@ export default function DayTimeline() {
 
     const summary = [
       `Date: ${visibleDateLabel}`,
-      `Planned total: ${formatDuration(plannedTotalMin)}`,
-      `Actual total: ${formatDuration(actualTotalMin)}`,
+      `Plan total: ${formatDuration(plannedTotalMin)}`,
+      `Done total: ${formatDuration(actualTotalMin)}`,
       `Delta: ${deltaMin >= 0 ? '+' : '-'}${formatDuration(deltaMin)}`,
       '',
       'Tag totals:',
       tagLines,
       '',
-      'Planned blocks:',
+      'Plan blocks:',
       plannedLines,
       '',
-      'Actual blocks:',
+      'Done blocks:',
       actualLines,
     ].join('\n');
 
@@ -1173,10 +1283,11 @@ export default function DayTimeline() {
           invalid,
         };
 
-        draftCreateRef.current = initialDraft;
-        void Haptics.selectionAsync();
-        setDraftCreate(initialDraft);
-        setIsCreatingDraft(true);
+      draftCreateRef.current = initialDraft;
+      createHapticKeyRef.current = `${initialDraft.startMin}-${initialDraft.endMin}`;
+      void triggerSelectionHaptic();
+      setDraftCreate(initialDraft);
+      setIsCreatingDraft(true);
         return;
       }
 
@@ -1193,6 +1304,12 @@ export default function DayTimeline() {
 
       draftCreateRef.current = nextDraft;
       setDraftCreate(nextDraft);
+      const nextKey = `${nextDraft.startMin}-${nextDraft.endMin}`;
+
+      if (createHapticKeyRef.current !== nextKey) {
+        createHapticKeyRef.current = nextKey;
+        void triggerSelectionHaptic();
+      }
     },
     [minuteFromAbsoluteY, sortedBlocks]
   );
@@ -1210,6 +1327,7 @@ export default function DayTimeline() {
       setDraftCreate(null);
       draftCreateRef.current = null;
       draftCandidateRef.current = null;
+      createHapticKeyRef.current = null;
       return;
     }
 
@@ -1220,6 +1338,7 @@ export default function DayTimeline() {
     setDraftCreate(null);
     draftCreateRef.current = null;
     draftCandidateRef.current = null;
+    createHapticKeyRef.current = null;
 
     if (!currentDraft && !currentCandidate) {
       return;
@@ -1332,15 +1451,11 @@ export default function DayTimeline() {
         .map((block) => {
         const matches = matchesTagFilter(block, tagFilter);
 
-        if (!settings.dimInsteadOfHide && !matches) {
-          return null;
-        }
-
         const dimForFocus = isFocusActive && !isHighlighted(block);
 
         return {
           block,
-          dimmed: (settings.dimInsteadOfHide && !matches) || dimForFocus,
+          dimmed: !matches || dimForFocus,
         };
       })
       .filter((item): item is { block: TimeBlock; dimmed: boolean } => item !== null);
@@ -1349,9 +1464,11 @@ export default function DayTimeline() {
       planned: toRenderable('planned'),
       actual: toRenderable('actual'),
     };
-  }, [focusedPlannedId, settings.dimInsteadOfHide, sortedBlocks, tagFilter]);
+  }, [focusedPlannedId, sortedBlocks, tagFilter]);
 
   const hasAnyBlocks = sortedBlocks.length > 0;
+  const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE;
+  const nowTimeLabel = formatCurrentTimeLabel(nowMinute);
   const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
     ? 'compare'
     : laneVisibility.planned
@@ -1377,7 +1494,7 @@ export default function DayTimeline() {
   return (
     <View style={styles.screen}>
       <View style={styles.topHeaderRow}>
-        <Text style={styles.appTitle}>Plan vs Actual</Text>
+        <Text style={styles.appTitle}>Plan vs Done</Text>
         <View style={styles.topActions}>
           <Pressable
             accessibilityLabel="Open daily metrics"
@@ -1394,10 +1511,10 @@ export default function DayTimeline() {
             <Ionicons name="settings-outline" size={18} color={UI_COLORS.neutralText} />
           </Pressable>
           <Pressable
-            accessibilityLabel={`Add ${selectedLane} block`}
+            accessibilityLabel={`Add ${(compareMode ? lastUsedCreateLane : selectedLane) === 'planned' ? 'plan' : 'done'} block`}
             accessibilityRole="button"
             style={styles.addButton}
-            onPress={() => openCreateEditor(selectedLane)}>
+            onPress={() => openCreateEditor(compareMode ? lastUsedCreateLane : selectedLane)}>
             <Ionicons name="add" size={20} color={UI_COLORS.neutralText} />
           </Pressable>
         </View>
@@ -1443,7 +1560,7 @@ export default function DayTimeline() {
                 onPress={() => setViewMode(mode)}
                 style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
                 <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
-                  {mode === 'compare' ? 'Compare' : mode === 'planned' ? 'Planned' : 'Actual'}
+                  {mode === 'compare' ? 'Compare' : mode === 'planned' ? 'Plan' : 'Done'}
                 </Text>
               </Pressable>
             );
@@ -1467,15 +1584,17 @@ export default function DayTimeline() {
 
       <View style={styles.headerRow}>
         <View style={styles.timeHeader} />
-        {compareMode ? (
-          <View style={styles.compareHeaderRow}>
-            <Text style={styles.compareHeaderLabel}>Plan</Text>
-            <View style={styles.compareHeaderDivider} />
-            <Text style={styles.compareHeaderLabel}>Actual</Text>
-          </View>
-        ) : (
-          <Text style={styles.laneHeader}>{laneVisibility.planned ? 'Plan' : 'Actual'}</Text>
-        )}
+        <View style={styles.laneHeaderContainer}>
+          {compareMode ? (
+            <View style={styles.compareHeaderRow}>
+              <Text style={styles.compareHeaderLabel}>Plan</Text>
+              <View style={styles.compareHeaderDivider} />
+              <Text style={styles.compareHeaderLabel}>Done</Text>
+            </View>
+          ) : (
+            <Text style={styles.laneHeader}>{laneVisibility.planned ? 'Plan' : 'Done'}</Text>
+          )}
+        </View>
       </View>
 
       <ScrollView
@@ -1522,37 +1641,46 @@ export default function DayTimeline() {
 
                       return <View key={index} style={[styles.hourLine, { top }]} />;
                     })}
-                    {dayKey === todayDayKey ? (
-                      <View
-                        pointerEvents="none"
-                        style={[
-                          styles.nowLineWrap,
-                          { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
-                        ]}>
-                        <View style={styles.nowLine} />
-                        <Text style={styles.nowLineLabel}>Now</Text>
-                      </View>
-                    ) : null}
-
                     {renderedLaneBlocks[lane].map(({ block, dimmed }) => (
-                      <Block
-                        key={block.id}
-                        id={block.id}
-                        startMin={block.startMin}
-                        endMin={block.endMin}
-                        title={block.title}
-                        tags={block.tags}
-                        lane={block.lane}
-                        onPress={handleBlockPress}
-                        onDragStart={handleDragStart}
+                    <Block
+                      key={block.id}
+                      id={block.id}
+                      startMin={block.startMin}
+                      endMin={block.endMin}
+                      previewStartMin={dragPreviewById[block.id]?.startMin}
+                      previewEndMin={dragPreviewById[block.id]?.endMin}
+                      title={block.title}
+                      tags={block.tags}
+                      lane={block.lane}
+                      onPress={handleBlockPress}
+                      onDragStart={handleDragStart}
                       onDragEnd={handleDragEnd}
                       onDragRelease={handleDragRelease}
                       onDragStep={handleDragStep}
+                      onDragPreview={handleDragPreview}
+                      onFocusStart={handleBlockFocusStart}
+                      onFocusEnd={handleBlockFocusEnd}
                       categoryColorMap={categoryColorMap}
                       interactive={!dimmed}
                       dimmed={dimmed}
-                      />
+                    />
                     ))}
+                    {draftCreate && selectedLane === lane ? (
+                      <View
+                        pointerEvents="none"
+                        style={[
+                          styles.draftBlock,
+                          {
+                            top: draftCreate.startMin * PIXELS_PER_MINUTE,
+                            height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
+                          },
+                          draftCreate.invalid && styles.draftBlockInvalid,
+                        ]}>
+                        <Text style={styles.draftBlockText}>
+                          {formatAmPm(draftCreate.startMin)}-{formatAmPm(draftCreate.endMin)}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 </GestureDetector>
               ))}
@@ -1574,24 +1702,14 @@ export default function DayTimeline() {
                   return <View key={index} style={[styles.hourLine, { top }]} />;
                 })}
 
-                {dayKey === todayDayKey ? (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.nowLineWrap,
-                      { top: clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE },
-                    ]}>
-                    <View style={styles.nowLine} />
-                    <Text style={styles.nowLineLabel}>Now</Text>
-                  </View>
-                ) : null}
-
                 {renderedLaneBlocks[selectedLane].map(({ block, dimmed }) => (
                   <Block
                     key={block.id}
                     id={block.id}
                     startMin={block.startMin}
                     endMin={block.endMin}
+                    previewStartMin={dragPreviewById[block.id]?.startMin}
+                    previewEndMin={dragPreviewById[block.id]?.endMin}
                     title={block.title}
                     tags={block.tags}
                     lane={block.lane}
@@ -1600,6 +1718,9 @@ export default function DayTimeline() {
                     onDragEnd={handleDragEnd}
                     onDragRelease={handleDragRelease}
                     onDragStep={handleDragStep}
+                    onDragPreview={handleDragPreview}
+                    onFocusStart={handleBlockFocusStart}
+                    onFocusEnd={handleBlockFocusEnd}
                     categoryColorMap={categoryColorMap}
                     interactive={!dimmed}
                     dimmed={dimmed}
@@ -1618,13 +1739,25 @@ export default function DayTimeline() {
                       draftCreate.invalid && styles.draftBlockInvalid,
                     ]}>
                     <Text style={styles.draftBlockText}>
-                      {formatHHMM(draftCreate.startMin)}-{formatHHMM(draftCreate.endMin)}
+                      {formatAmPm(draftCreate.startMin)}-{formatAmPm(draftCreate.endMin)}
                     </Text>
                   </View>
                 ) : null}
               </View>
             </GestureDetector>
           )}
+          {dayKey === todayDayKey ? (
+            <>
+              <View pointerEvents="none" style={[styles.nowLineWrap, { top: nowOffset }]}>
+                <View style={styles.nowLine} />
+              </View>
+              <View pointerEvents="none" style={[styles.nowLineLabelWrap, { top: nowOffset }]}>
+                <View style={styles.nowLineLabel}>
+                  <Text style={styles.nowLineLabelText}>{nowTimeLabel}</Text>
+                </View>
+              </View>
+            </>
+          ) : null}
         </View>
       </ScrollView>
 
@@ -1671,7 +1804,7 @@ export default function DayTimeline() {
           <View style={styles.sheetCard}>
             <View style={styles.sheetGrabber} />
             <View style={styles.sheetHeaderRow}>
-              <Text style={styles.sheetTitle}>Daily Metrics</Text>
+              <Text style={styles.sheetTitle}>Metrics</Text>
               <Pressable
                 accessibilityLabel="Close daily metrics"
                 style={styles.sheetCloseButton}
@@ -1680,10 +1813,11 @@ export default function DayTimeline() {
               </Pressable>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+              <Text style={styles.sectionTitle}>Today</Text>
               <View style={[styles.summaryCard, styles.summaryCardPlanned]}>
                 <View style={styles.summaryCardHeader}>
                   <Ionicons name="radio-button-on-outline" size={14} color={UI_COLORS.planned} />
-                  <Text style={styles.summaryCardLabel}>Planned</Text>
+                  <Text style={styles.summaryCardLabel}>Plan</Text>
                 </View>
                 <Text style={[styles.summaryCardValue, styles.summaryCardValuePlanned]}>{minutesToHM(plannedTotalMin)}</Text>
                 <Text style={styles.summaryCardSubtext}>
@@ -1694,30 +1828,30 @@ export default function DayTimeline() {
               <View style={[styles.summaryCard, styles.summaryCardActual]}>
                 <View style={styles.summaryCardHeader}>
                   <Ionicons name="link-outline" size={14} color={UI_COLORS.actual} />
-                  <Text style={styles.summaryCardLabel}>Linked Actual</Text>
+                  <Text style={styles.summaryCardLabel}>Done (Matched)</Text>
                 </View>
                 <Text style={[styles.summaryCardValue, styles.summaryCardValueActual]}>
                   {minutesToHM(linkedActualTotals.linkedMinutes)}
                 </Text>
                 <Text style={styles.summaryCardSubtext}>
-                  {linkedActualTotals.linkedBlocks} linked {linkedActualTotals.linkedBlocks === 1 ? 'block' : 'blocks'}
+                  {linkedActualTotals.linkedBlocks} matched {linkedActualTotals.linkedBlocks === 1 ? 'block' : 'blocks'}
                 </Text>
               </View>
 
               <View style={[styles.summaryCard, styles.summaryCardFulfillment]}>
                 <View style={styles.summaryCardHeader}>
                   <Ionicons name="trending-up-outline" size={14} color={UI_COLORS.accent} />
-                  <Text style={styles.summaryCardLabel}>Fulfillment</Text>
+                  <Text style={styles.summaryCardLabel}>Completion</Text>
                 </View>
                 <Text style={[styles.summaryCardValue, styles.summaryCardValueFulfillment]}>
                   {overallFulfillmentPercent}%
                 </Text>
-                <Text style={styles.summaryCardSubtext}>Of planned time</Text>
+                <Text style={styles.summaryCardSubtext}>Of plan time</Text>
               </View>
 
-              <Text style={styles.sectionTitle}>Plan Fulfillment</Text>
+              <Text style={styles.sectionTitle}>Completion by Plan</Text>
               {fulfillmentRows.length === 0 ? (
-                <Text style={styles.emptySheetText}>No planned blocks yet for this day.</Text>
+                <Text style={styles.emptySheetText}>No plan blocks yet for this day.</Text>
               ) : (
                 fulfillmentRows.map((row) => {
                   const linkedBlocks = actualBlocks.filter((block) => block.linkedPlannedId === row.plannedId).length;
@@ -1734,9 +1868,9 @@ export default function DayTimeline() {
                         <Text style={styles.fulfillmentPercent}>{row.fulfillmentPercent}%</Text>
                       </View>
                       <View style={styles.fulfillmentRowMeta}>
-                        <Text style={styles.fulfillmentMeta}>Planned: {minutesToHM(row.plannedMinutes)}</Text>
+                        <Text style={styles.fulfillmentMeta}>Plan: {minutesToHM(row.plannedMinutes)}</Text>
                         <Text style={styles.fulfillmentMeta}>
-                          Linked: {minutesToHM(row.linkedActualMinutes)} ({linkedBlocks} {linkedBlocks === 1 ? 'block' : 'blocks'})
+                          Done: {minutesToHM(row.linkedActualMinutes)} ({linkedBlocks} {linkedBlocks === 1 ? 'block' : 'blocks'})
                         </Text>
                       </View>
                       <View style={styles.progressTrack}>
@@ -1780,7 +1914,7 @@ export default function DayTimeline() {
                     </View>
 
                     <View style={styles.categoryLine}>
-                      <Text style={styles.categoryLineLabel}>Actual</Text>
+                      <Text style={styles.categoryLineLabel}>Done</Text>
                       <Text style={styles.categoryLineValue}>{minutesToHM(row.actualMinutes)}</Text>
                     </View>
                     <View style={styles.categoryTrack}>
@@ -1812,7 +1946,7 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: UI_COLORS.appBackground,
-    paddingTop: 48,
+    paddingTop: 42,
     paddingHorizontal: 12,
     paddingBottom: 0,
   },
@@ -1825,8 +1959,8 @@ const styles = StyleSheet.create({
   },
   appTitle: {
     flex: 1,
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: UI_COLORS.neutralText,
   },
   topActions: {
@@ -1838,9 +1972,9 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: UI_COLORS.glassSurface,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: UI_COLORS.glassStroke,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1854,9 +1988,9 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: UI_COLORS.glassSurface,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: UI_COLORS.glassStroke,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1879,31 +2013,37 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   topControlRow: {
-    marginBottom: 8,
+    marginBottom: 6,
   },
   segmentedControl: {
     flexDirection: 'row',
     backgroundColor: UI_COLORS.surfaceMuted,
-    borderRadius: 12,
-    padding: 2,
+    borderRadius: 10,
+    padding: 1.5,
   },
   segmentButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 32,
-    borderRadius: 10,
+    minHeight: 30,
+    borderRadius: 9,
   },
   segmentButtonSelected: {
     backgroundColor: UI_COLORS.surface,
+    shadowColor: '#111827',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
   },
   segmentButtonText: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '400',
     color: UI_COLORS.neutralTextSoft,
   },
   segmentButtonTextSelected: {
     color: UI_COLORS.neutralText,
+    fontWeight: '600',
   },
   addButton: {
     width: 36,
@@ -1911,9 +2051,9 @@ const styles = StyleSheet.create({
     borderRadius: UI_RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: UI_COLORS.glassSurface,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: UI_COLORS.glassStroke,
   },
   feedbackText: {
     minHeight: 18,
@@ -1940,9 +2080,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
     alignSelf: 'flex-start',
     borderRadius: 12,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: UI_COLORS.glassSurfaceStrong,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: UI_COLORS.glassStroke,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
@@ -1957,29 +2097,32 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   timeHeader: {
-    width: 54,
+    width: TIME_GUTTER_WIDTH,
   },
-  laneHeader: {
+  laneHeaderContainer: {
     flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: '600',
-    color: UI_COLORS.neutralTextSoft,
-  },
-  compareHeaderRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    minHeight: 25,
     borderBottomWidth: 0.5,
     borderBottomColor: UI_COLORS.neutralBorder,
+    justifyContent: 'center',
     paddingBottom: 6,
+  },
+  laneHeader: {
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '500',
+    color: UI_COLORS.neutralText,
+  },
+  compareHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   compareHeaderLabel: {
     flex: 1,
     textAlign: 'center',
     color: UI_COLORS.neutralText,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   compareHeaderDivider: {
     width: 0.5,
@@ -1990,17 +2133,19 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 0,
     borderRadius: 0,
-    backgroundColor: 'transparent',
+    backgroundColor: UI_COLORS.glassSurface,
     marginBottom: 2,
+    overflow: 'hidden',
   },
   scrollContent: {
     minHeight: TIMELINE_HEIGHT,
   },
   timelineBody: {
     flexDirection: 'row',
+    position: 'relative',
   },
   timeColumn: {
-    width: 54,
+    width: TIME_GUTTER_WIDTH,
     borderRightWidth: 0.5,
     borderRightColor: UI_COLORS.neutralBorder,
     backgroundColor: 'transparent',
@@ -2040,25 +2185,36 @@ const styles = StyleSheet.create({
   },
   nowLineWrap: {
     position: 'absolute',
-    left: 0,
+    left: TIME_GUTTER_WIDTH - NOW_LINE_CONNECT_OFFSET,
     right: 0,
     zIndex: 4,
   },
   nowLine: {
-    borderTopWidth: 1,
-    borderTopColor: '#DC2626',
+    borderTopWidth: 2,
+    borderTopColor: NOW_COLOR,
+  },
+  nowLineLabelWrap: {
+    position: 'absolute',
+    left: 0,
+    width: TIME_GUTTER_WIDTH,
+    zIndex: 5,
   },
   nowLineLabel: {
     position: 'absolute',
-    top: -9,
-    right: 8,
-    backgroundColor: '#FEE2E2',
-    color: '#991B1B',
+    top: -NOW_BUBBLE_HEIGHT / 2,
+    right: 0,
+    backgroundColor: NOW_COLOR,
+    height: NOW_BUBBLE_HEIGHT,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: NOW_BUBBLE_HEIGHT / 2,
+    overflow: 'hidden',
+  },
+  nowLineLabelText: {
+    color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '700',
-    paddingHorizontal: 6,
-    borderRadius: 8,
-    overflow: 'hidden',
   },
   draftBlock: {
     position: 'absolute',
@@ -2127,6 +2283,8 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 10,
     backgroundColor: UI_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2161,12 +2319,12 @@ const styles = StyleSheet.create({
   },
   summaryCardLabel: {
     color: UI_COLORS.neutralTextSoft,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   summaryCardValue: {
     marginTop: 2,
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
   },
   summaryCardValuePlanned: {
@@ -2186,9 +2344,9 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: UI_COLORS.neutralText,
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 8,
   },
   emptySheetText: {
     color: UI_COLORS.neutralTextSoft,
