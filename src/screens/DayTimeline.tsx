@@ -8,6 +8,7 @@ import {
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from 'react-native';
@@ -227,8 +228,9 @@ export default function DayTimeline() {
   const [editorState, setEditorState] = useState<EditorState>(INITIAL_EDITOR_STATE);
   const [selectedLane, setSelectedLane] = useState<Lane>('planned');
   const [tagFilter, setTagFilter] = useState<TagFilter>('all');
-  const [quickAddVisible, setQuickAddVisible] = useState(false);
-  const [menuVisible, setMenuVisible] = useState(false);
+  const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
+  const [tagBreakdownExpanded, setTagBreakdownExpanded] = useState(false);
+  const [quickAddExpanded, setQuickAddExpanded] = useState(false);
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
   const draftCreateRef = useRef<DraftCreateState | null>(null);
@@ -696,7 +698,6 @@ export default function DayTimeline() {
           );
 
           setBlocks((current) => sortByStartMin([...current, inserted]));
-          setQuickAddVisible(false);
           openEditEditor(inserted);
         } catch {
           Alert.alert('Storage error', 'Could not create quick add block.');
@@ -707,8 +708,6 @@ export default function DayTimeline() {
   );
 
   const copyPlannedToActual = useCallback(() => {
-    setMenuVisible(false);
-
     void (async () => {
       const planned = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
       const targetActual = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'actual'));
@@ -751,8 +750,6 @@ export default function DayTimeline() {
     if (!isViewingToday) {
       return;
     }
-
-    setMenuVisible(false);
 
     void (async () => {
       const yesterdayKey = shiftDayKey(todayDayKey, -1);
@@ -797,21 +794,17 @@ export default function DayTimeline() {
     })();
   }, [isViewingToday, reloadCurrentDay, sortedBlocks, todayDayKey]);
 
-  const toggleDimMode = useCallback(() => {
-    setMenuVisible(false);
-
+  const setDimMode = useCallback((value: boolean) => {
     void (async () => {
       try {
-        await updateSettings({ dimInsteadOfHide: !settings.dimInsteadOfHide });
+        await updateSettings({ dimInsteadOfHide: value });
       } catch {
         Alert.alert('Settings error', 'Could not update dim mode setting.');
       }
     })();
-  }, [settings.dimInsteadOfHide, updateSettings]);
+  }, [updateSettings]);
 
   const shareDaySummary = useCallback(() => {
-    setMenuVisible(false);
-
     const plannedBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
     const actualBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'actual'));
 
@@ -1066,33 +1059,41 @@ export default function DayTimeline() {
   }, [selectedLaneBlocks, settings.dimInsteadOfHide, tagFilter]);
 
   const hasAnyBlocks = sortedBlocks.length > 0;
+  const performanceDeltaText =
+    deltaMin === 0
+      ? 'On track with plan'
+      : deltaMin > 0
+        ? `${formatDuration(deltaMin)} ahead of plan`
+        : `${formatDuration(deltaMin)} behind plan`;
+  const performanceDeltaStyle =
+    deltaMin === 0
+      ? styles.performanceDeltaNeutral
+      : deltaMin > 0
+        ? styles.performanceDeltaAhead
+        : styles.performanceDeltaBehind;
 
   return (
     <View style={styles.screen}>
-      <View style={styles.titleRow}>
-        <Text style={styles.screenTitle}>Daily Timeline</Text>
-        <Pressable
-          accessibilityLabel="Open day actions"
-          style={styles.menuButton}
-          onPress={() => setMenuVisible(true)}>
-          <Text style={styles.menuButtonText}>Menu</Text>
-        </Pressable>
-      </View>
-
       <View style={styles.dayNavRow}>
         <Pressable
           accessibilityLabel="Go to previous day"
+          accessibilityRole="button"
           style={styles.dayNavButton}
           onPress={goToPreviousDay}>
           <Text style={styles.dayNavButtonText}>{'<'}</Text>
         </Pressable>
         <Text style={styles.dayNavLabel}>{visibleDateLabel}</Text>
         <View style={styles.dayNavRightGroup}>
-          <Pressable accessibilityLabel="Jump to today" style={styles.todayButton} onPress={goToToday}>
+          <Pressable
+            accessibilityLabel="Jump to today"
+            accessibilityRole="button"
+            style={styles.todayButton}
+            onPress={goToToday}>
             <Text style={styles.todayButtonText}>Today</Text>
           </Pressable>
           <Pressable
             accessibilityLabel="Go to next day"
+            accessibilityRole="button"
             style={[styles.dayNavButton, !canGoToNextDay && styles.dayNavButtonDisabled]}
             onPress={goToNextDay}
             disabled={!canGoToNextDay}>
@@ -1103,14 +1104,7 @@ export default function DayTimeline() {
         </View>
       </View>
 
-      <View style={styles.quickFilterRow}>
-        <Pressable
-          accessibilityLabel="Open quick add presets"
-          style={styles.quickAddButton}
-          onPress={() => setQuickAddVisible(true)}>
-          <Text style={styles.quickAddButtonText}>Quick Add</Text>
-        </Pressable>
-
+      <View style={styles.topControlRow}>
         <View style={styles.segmentedControl}>
           {(['planned', 'actual'] as Lane[]).map((lane) => {
             const selected = selectedLane === lane;
@@ -1119,6 +1113,7 @@ export default function DayTimeline() {
               <Pressable
                 key={lane}
                 accessibilityLabel={`Select ${lane} lane`}
+                accessibilityRole="button"
                 onPress={() => setSelectedLane(lane)}
                 style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
                 <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
@@ -1131,68 +1126,22 @@ export default function DayTimeline() {
 
         <Pressable
           accessibilityLabel={`Add ${selectedLane} block`}
-          style={styles.addButtonCompact}
+          accessibilityRole="button"
+          style={styles.addButton}
           onPress={() => openCreateEditor(selectedLane)}>
-          <Text style={styles.addButtonCompactText}>Add</Text>
+          <Text style={styles.addButtonText}>+</Text>
         </Pressable>
       </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagFilterRow}>
-        {(['all', ...TAG_CATALOG] as TagFilter[]).map((value) => {
-          const selected = tagFilter === value;
-
-          return (
-            <Pressable
-              key={value}
-              accessibilityLabel={`Filter by tag ${value}`}
-              style={[styles.tagFilterPill, selected && styles.filterPillSelected]}
-              onPress={() => setTagFilter(value)}>
-              <Text style={[styles.filterPillText, selected && styles.filterPillTextSelected]}>
-                {value === 'all' ? 'All tags' : value}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryItem}>Planned: {formatDuration(plannedTotalMin)}</Text>
-        <Text style={styles.summaryItem}>Actual: {formatDuration(actualTotalMin)}</Text>
-        <Text style={styles.summaryItem}>
-          Delta: {deltaMin >= 0 ? '+' : '-'}
-          {formatDuration(deltaMin)}
-        </Text>
-      </View>
-
-      <View style={styles.tagTotalsCard}>
-        <Text style={styles.tagTotalsTitle}>Tag totals</Text>
-        {visibleTagTotals.length === 0 ? (
-          <Text style={styles.tagTotalsEmpty}>No tag totals yet for this day.</Text>
-        ) : (
-          visibleTagTotals.map((row) => (
-            <View key={row.tag} style={styles.tagTotalsRow}>
-              <Text style={styles.tagTotalsTag}>{row.tag}</Text>
-              <Text style={styles.tagTotalsValue}>P {formatDuration(row.plannedMin)}</Text>
-              <Text style={styles.tagTotalsValue}>A {formatDuration(row.actualMin)}</Text>
-              <Text style={styles.tagTotalsValue}>
-                D {row.deltaMin >= 0 ? '+' : '-'}
-                {formatDuration(row.deltaMin)}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-
-      <Text style={styles.feedbackText}>{feedbackMessage ?? ' '}</Text>
 
       {!hasAnyBlocks ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateTitle}>No blocks for this day.</Text>
-          <Text style={styles.emptyStateBody}>Use Quick Add to create your first planned or actual block.</Text>
+          <Text style={styles.emptyStateBody}>Tap empty time or use the add button to create a block.</Text>
           <Pressable
             accessibilityLabel="Add first block"
+            accessibilityRole="button"
             style={styles.emptyStateButton}
-            onPress={() => setQuickAddVisible(true)}>
+            onPress={() => openCreateEditor(selectedLane)}>
             <Text style={styles.emptyStateButtonText}>Add first block</Text>
           </Pressable>
         </View>
@@ -1286,6 +1235,17 @@ export default function DayTimeline() {
         </View>
       </ScrollView>
 
+      <Text style={styles.feedbackText}>{feedbackMessage ?? ' '}</Text>
+
+      <Pressable
+        accessibilityLabel="Open insights and tools"
+        accessibilityRole="button"
+        style={styles.sheetHandle}
+        onPress={() => setToolsSheetVisible(true)}>
+        <View style={styles.sheetHandleBar} />
+        <Text style={styles.sheetHandleText}>Tools</Text>
+      </Pressable>
+
       <BlockEditorModal
         visible={editorState.visible}
         mode={editorState.mode}
@@ -1304,60 +1264,183 @@ export default function DayTimeline() {
         onDelete={handleDelete}
       />
 
-      <Modal animationType="fade" transparent visible={quickAddVisible} onRequestClose={() => setQuickAddVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.quickAddCard}>
-            <Text style={styles.quickAddTitle}>Quick Add</Text>
-            {QUICK_PRESETS.map((preset) => (
-              <Pressable
-                key={preset.key}
-                accessibilityLabel={`Quick add ${preset.title}`}
-                style={styles.quickAddPreset}
-                onPress={() => handleQuickAdd(preset)}>
-                <Text style={styles.quickAddPresetTitle}>{preset.title}</Text>
-                <Text style={styles.quickAddPresetBody}>
-                  {preset.durationMin}m | {preset.lane} | {preset.tags.join(', ')}
-                </Text>
-              </Pressable>
-            ))}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={toolsSheetVisible}
+        onRequestClose={() => setToolsSheetVisible(false)}>
+        <View style={styles.sheetModalRoot}>
+          <Pressable
+            style={styles.sheetBackdrop}
+            accessibilityLabel="Close tools"
+            accessibilityRole="button"
+            onPress={() => setToolsSheetVisible(false)}
+          />
+          <View style={styles.sheetCard}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetDate}>{visibleDateLabel}</Text>
+            <Text style={styles.sheetTitle}>Day performance</Text>
+
+            <View style={styles.performanceSummary}>
+              <Text style={styles.performanceLine}>
+                {formatDuration(plannedTotalMin)} planned · {formatDuration(actualTotalMin)} actual
+              </Text>
+              <Text style={[styles.performanceDelta, performanceDeltaStyle]}>{performanceDeltaText}</Text>
+            </View>
+            <View style={styles.sheetDivider} />
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagFilterRow}>
+              {(['all', ...TAG_CATALOG] as TagFilter[]).map((value) => {
+                const selected = tagFilter === value;
+
+                return (
+                  <Pressable
+                    key={value}
+                    accessibilityLabel={`Filter by tag ${value}`}
+                    accessibilityRole="button"
+                    style={[styles.tagFilterPill, selected && styles.filterPillSelected]}
+                    onPress={() => setTagFilter(value)}>
+                    <Text style={[styles.filterPillText, selected && styles.filterPillTextSelected]}>
+                      {value === 'all' ? 'All tags' : value}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.sheetSwitchRow}>
+              <Text style={styles.sheetSwitchLabel}>Dim instead of hide</Text>
+              <Switch
+                accessibilityLabel="Toggle dim instead of hide"
+                value={settings.dimInsteadOfHide}
+                onValueChange={setDimMode}
+              />
+            </View>
+            <View style={styles.sheetDivider} />
+
             <Pressable
-              accessibilityLabel="Close quick add"
-              style={styles.modalClose}
-              onPress={() => setQuickAddVisible(false)}>
-              <Text style={styles.modalCloseText}>Close</Text>
+              accessibilityLabel="Toggle tag breakdown"
+              accessibilityRole="button"
+              style={styles.collapsibleHeader}
+              onPress={() => setTagBreakdownExpanded((current) => !current)}>
+              <Text style={styles.collapsibleHeaderText}>
+                {tagBreakdownExpanded ? '▼' : '▶'} Tag breakdown
+              </Text>
             </Pressable>
+            {tagBreakdownExpanded ? (
+              <View style={styles.tagBreakdownWrap}>
+                {visibleTagTotals.length === 0 ? (
+                  <Text style={styles.tagTotalsEmpty}>No tag totals yet for this day.</Text>
+                ) : (
+                  visibleTagTotals.map((row) => (
+                    <View key={row.tag} style={styles.tagBreakdownRow}>
+                      <View style={styles.tagBreakdownMain}>
+                        <Text style={styles.tagBreakdownTag}>{row.tag}</Text>
+                        <Text style={styles.tagBreakdownSubline}>
+                          P {formatDuration(row.plannedMin)} · A {formatDuration(row.actualMin)}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.tagBreakdownDelta,
+                          row.deltaMin > 0
+                            ? styles.performanceDeltaAhead
+                            : row.deltaMin < 0
+                              ? styles.performanceDeltaBehind
+                              : styles.performanceDeltaNeutral,
+                        ]}>
+                        {row.deltaMin === 0
+                          ? 'On track'
+                          : `${formatDuration(row.deltaMin)} ${row.deltaMin > 0 ? 'ahead' : 'behind'}`}
+                      </Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            ) : null}
+            <View style={styles.sheetDivider} />
+
+            <View style={styles.actionList}>
+              <Pressable
+                accessibilityLabel="Copy planned to actual"
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+                onPress={() => {
+                  setToolsSheetVisible(false);
+                  copyPlannedToActual();
+                }}>
+                <View style={styles.actionRowInner}>
+                  <Text style={styles.actionRowText}>Copy planned to actual</Text>
+                  <Text style={styles.actionChevron}>›</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Copy yesterday planned"
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.actionRow,
+                  pressed && styles.actionRowPressed,
+                  !isViewingToday && styles.menuItemDisabled,
+                ]}
+                disabled={!isViewingToday}
+                onPress={() => {
+                  setToolsSheetVisible(false);
+                  copyYesterdayPlannedToToday();
+                }}>
+                <View style={styles.actionRowInner}>
+                  <Text style={[styles.actionRowText, !isViewingToday && styles.menuItemTextDisabled]}>
+                    Copy yesterday planned
+                  </Text>
+                  <Text style={[styles.actionChevron, !isViewingToday && styles.menuItemTextDisabled]}>
+                    ›
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Share day summary"
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+                onPress={() => {
+                  setToolsSheetVisible(false);
+                  shareDaySummary();
+                }}>
+                <View style={styles.actionRowInner}>
+                  <Text style={styles.actionRowText}>Share day summary</Text>
+                  <Text style={styles.actionChevron}>›</Text>
+                </View>
+              </Pressable>
+            </View>
+            <View style={styles.sheetDivider} />
+
+            <Pressable
+              accessibilityLabel="Toggle quick add presets"
+              accessibilityRole="button"
+              style={styles.collapsibleHeader}
+              onPress={() => setQuickAddExpanded((current) => !current)}>
+              <Text style={styles.collapsibleHeaderText}>{quickAddExpanded ? '▼' : '▶'} Quick Add</Text>
+            </Pressable>
+            {quickAddExpanded ? (
+              <ScrollView style={styles.quickAddList}>
+                {QUICK_PRESETS.map((preset) => (
+                  <Pressable
+                    key={preset.key}
+                    accessibilityLabel={`Quick add ${preset.title}`}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [styles.quickAddRow, pressed && styles.actionRowPressed]}
+                    onPress={() => {
+                      setToolsSheetVisible(false);
+                      handleQuickAdd(preset);
+                    }}>
+                    <Text style={styles.quickAddRowTitle}>{preset.title}</Text>
+                    <Text style={styles.quickAddRowMeta}>
+                      {preset.durationMin}m · {preset.lane}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
           </View>
         </View>
-      </Modal>
-
-      <Modal animationType="fade" transparent visible={menuVisible} onRequestClose={() => setMenuVisible(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setMenuVisible(false)}>
-          <View style={styles.menuCard}>
-            <Pressable accessibilityLabel="Share day summary" style={styles.menuItem} onPress={shareDaySummary}>
-              <Text style={styles.menuItemText}>Share day summary</Text>
-            </Pressable>
-            <Pressable accessibilityLabel="Copy planned to actual" style={styles.menuItem} onPress={copyPlannedToActual}>
-              <Text style={styles.menuItemText}>Copy planned to actual</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Copy yesterday planned"
-              style={[styles.menuItem, !isViewingToday && styles.menuItemDisabled]}
-              onPress={copyYesterdayPlannedToToday}
-              disabled={!isViewingToday}>
-              <Text style={[styles.menuItemText, !isViewingToday && styles.menuItemTextDisabled]}>
-                Copy yesterday planned
-              </Text>
-            </Pressable>
-            <Pressable accessibilityLabel="Toggle dim instead of hide" style={styles.menuItem} onPress={toggleDimMode}>
-              <Text style={styles.menuItemText}>
-                {settings.dimInsteadOfHide ? 'Hide non-matching blocks' : 'Dim instead of hide'}
-              </Text>
-            </Pressable>
-            <Pressable accessibilityLabel="Close menu" style={styles.menuItem} onPress={() => setMenuVisible(false)}>
-              <Text style={styles.menuItemText}>Close</Text>
-            </Pressable>
-          </View>
-        </Pressable>
       </Modal>
 
       {settingsLoading ? (
@@ -1375,30 +1458,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     paddingTop: 56,
     paddingHorizontal: 12,
-    paddingBottom: 8,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  screenTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  menuButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  menuButtonText: {
-    color: '#0F172A',
-    fontWeight: '600',
+    paddingBottom: 0,
   },
   dayNavRow: {
     flexDirection: 'row',
@@ -1454,24 +1514,11 @@ const styles = StyleSheet.create({
   dayNavButtonTextDisabled: {
     color: '#94A3B8',
   },
-  quickFilterRow: {
+  topControlRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginBottom: 8,
-  },
-  quickAddButton: {
-    borderWidth: 1,
-    borderColor: '#0F172A',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: '#0F172A',
-  },
-  quickAddButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
   },
   segmentedControl: {
     flex: 1,
@@ -1499,30 +1546,33 @@ const styles = StyleSheet.create({
   segmentButtonTextSelected: {
     color: '#FFFFFF',
   },
-  addButtonCompact: {
+  addButton: {
+    width: 44,
+    height: 44,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: '#FFFFFF',
+    borderColor: '#0F172A',
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F172A',
   },
-  addButtonCompactText: {
-    color: '#0F172A',
-    fontSize: 12,
+  addButtonText: {
+    color: '#FFFFFF',
+    fontSize: 24,
     fontWeight: '700',
+    marginTop: -1,
   },
   tagFilterRow: {
-    marginBottom: 8,
+    marginBottom: 4,
     minHeight: 34,
   },
   tagFilterPill: {
     marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderWidth: 0.5,
+    borderColor: '#D8E1EC',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     backgroundColor: '#FFFFFF',
   },
   filterPillSelected: {
@@ -1541,13 +1591,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 8,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    marginBottom: 6,
   },
   summaryItem: {
     fontSize: 12,
@@ -1555,12 +1601,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   tagTotalsCard: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
+    padding: 0,
+    marginBottom: 0,
   },
   tagTotalsTitle: {
     color: '#0F172A',
@@ -1593,7 +1635,7 @@ const styles = StyleSheet.create({
   },
   feedbackText: {
     minHeight: 18,
-    marginBottom: 8,
+    marginBottom: 6,
     fontSize: 12,
     color: '#B45309',
   },
@@ -1644,11 +1686,12 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   scrollView: {
-    height: VIEWPORT_HEIGHT,
+    flex: 1,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 10,
     backgroundColor: '#FFFFFF',
+    marginBottom: 6,
   },
   scrollContent: {
     minHeight: TIMELINE_HEIGHT,
@@ -1727,6 +1770,201 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  sheetHandle: {
+    borderTopWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginHorizontal: 14,
+  },
+  sheetHandleBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#94A3B8',
+    marginBottom: 6,
+  },
+  sheetHandleText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sheetModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+  },
+  sheetCard: {
+    maxHeight: '78%',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 18,
+  },
+  sheetGrabber: {
+    alignSelf: 'center',
+    width: 42,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#CBD5E1',
+    marginBottom: 10,
+  },
+  sheetTitle: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  sheetDate: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  performanceSummary: {
+    marginBottom: 6,
+    gap: 2,
+  },
+  performanceLine: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  performanceDelta: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  performanceDeltaAhead: {
+    color: '#166534',
+  },
+  performanceDeltaBehind: {
+    color: '#9F1239',
+  },
+  performanceDeltaNeutral: {
+    color: '#334155',
+  },
+  sheetDivider: {
+    borderTopWidth: 0.5,
+    borderTopColor: '#E2E8F0',
+    marginVertical: 8,
+  },
+  sheetSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: -2,
+    marginBottom: -2,
+  },
+  sheetSwitchLabel: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  collapsibleHeader: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    marginBottom: 2,
+  },
+  collapsibleHeaderText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  tagBreakdownWrap: {
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
+  tagBreakdownRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E2E8F0',
+    paddingVertical: 6,
+  },
+  tagBreakdownMain: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  tagBreakdownTag: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  tagBreakdownSubline: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  tagBreakdownDelta: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  actionList: {
+    borderTopWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderColor: '#E2E8F0',
+  },
+  actionRow: {
+    minHeight: 44,
+    justifyContent: 'center',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 2,
+  },
+  actionRowPressed: {
+    backgroundColor: '#F8FAFC',
+  },
+  actionRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  actionRowText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  actionChevron: {
+    color: '#64748B',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 12,
+  },
+  quickAddList: {
+    maxHeight: 220,
+  },
+  quickAddRow: {
+    minHeight: 44,
+    justifyContent: 'center',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#E2E8F0',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+  },
+  quickAddRowTitle: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  quickAddRowMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 1,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.35)',
@@ -1741,27 +1979,9 @@ const styles = StyleSheet.create({
   },
   quickAddTitle: {
     color: '#0F172A',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  quickAddPreset: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: '#F8FAFC',
-  },
-  quickAddPresetTitle: {
-    color: '#0F172A',
     fontSize: 13,
     fontWeight: '700',
-  },
-  quickAddPresetBody: {
-    color: '#475569',
-    fontSize: 12,
-    marginTop: 2,
+    marginBottom: 2,
   },
   modalClose: {
     marginTop: 4,
