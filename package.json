@@ -8,7 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "typecheck": "tsc --noEmit",
+    "prebuild:check": "expo config --type prebuild >/dev/null",
+    "release:check": "npm run lint && npm run typecheck && npm run prebuild:check"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

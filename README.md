@@ -1,50 +1,33 @@
-# Welcome to your Expo app 👋
+# Plan vs Actual
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Local-first timeline tracking app built with Expo and React Native.
 
-## Get started
+## Features
+- Create planned and completed time blocks on a day timeline.
+- Categorize blocks and customize category colors.
+- Link completed blocks to planned blocks for fulfillment tracking.
+- Store all core data locally on-device (SQLite).
+- Share daily summaries from the app.
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+## Development
 ```bash
-npm run reset-project
+npm install
+npm run start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Release Quality Gates
+```bash
+npm run release:check
+```
 
-## Learn more
+## App Store Readiness Files
+- Checklist status: [docs/app-store/submission-checklist.md](/Users/jacob/Development/plan-vs-actual/docs/app-store/submission-checklist.md)
+- Review notes template: [docs/app-store/review-notes-template.md](/Users/jacob/Development/plan-vs-actual/docs/app-store/review-notes-template.md)
+- Privacy policy: [legal/privacy-policy.md](/Users/jacob/Development/plan-vs-actual/legal/privacy-policy.md)
+- Terms: [legal/terms-of-service.md](/Users/jacob/Development/plan-vs-actual/legal/terms-of-service.md)
+- Support: [legal/support.md](/Users/jacob/Development/plan-vs-actual/legal/support.md)
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Required Manual Steps Before Submission
+1. Verify the configured support inbox (`support@planvsactual.app`) is monitored.
+2. Verify legal/support public URLs are live and add them to App Store Connect.
+3. Complete App Store Connect business, privacy, and listing configuration.

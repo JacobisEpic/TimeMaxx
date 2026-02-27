@@ -20,20 +20,20 @@ type AppSettingsContextValue = {
   signalDataChanged: () => void;
 };
 
+export const DEFAULT_CATEGORIES: AppSettings['categories'] = [
+  { id: 'health', label: 'Health', color: '#22C55E' },
+  { id: 'work', label: 'Work', color: '#3B82F6' },
+  { id: 'hobbies', label: 'Hobbies', color: '#8B5CF6' },
+  { id: 'break', label: 'Break', color: '#F59E0B' },
+  { id: 'other', label: 'None', color: '#9CA3AF' },
+];
+
 const DEFAULT_SETTINGS: AppSettings = {
   plannedScanStartMin: 9 * 60,
   actualScanStartMin: 12 * 60,
   dimInsteadOfHide: false,
   debugMode: false,
-  categories: [
-    { id: 'work', label: 'Work', color: '#3B82F6' },
-    { id: 'focus', label: 'Deep Focus', color: '#8B5CF6' },
-    { id: 'health', label: 'Workout', color: '#22C55E' },
-    { id: 'meeting', label: 'Meeting', color: '#0EA5A4' },
-    { id: 'personal', label: 'Personal', color: '#14B8A6' },
-    { id: 'break', label: 'Break', color: '#F59E0B' },
-    { id: 'admin', label: 'Admin', color: '#94A3B8' },
-  ],
+  categories: DEFAULT_CATEGORIES,
 };
 
 const META_KEYS = {
@@ -53,14 +53,26 @@ function parseCategoriesSetting(
   rawValue: string | null,
   fallback: AppSettings['categories']
 ): AppSettings['categories'] {
+  const ensureOtherCategory = (categories: AppSettings['categories']): AppSettings['categories'] => {
+    const normalized = categories.map((item) =>
+      item.id === 'other' ? { ...item, label: 'None', color: '#9CA3AF' } : item
+    );
+    const hasOther = normalized.some((item) => item.id === 'other');
+    if (hasOther) {
+      return normalized;
+    }
+
+    return [...normalized, { id: 'other', label: 'None', color: '#9CA3AF' }];
+  };
+
   if (!rawValue) {
-    return fallback;
+    return ensureOtherCategory(fallback);
   }
 
   try {
     const parsed = JSON.parse(rawValue);
     if (!Array.isArray(parsed)) {
-      return fallback;
+      return ensureOtherCategory(fallback);
     }
 
     const sanitized = parsed
@@ -81,9 +93,9 @@ function parseCategoriesSetting(
       })
       .filter((item): item is { id: string; label: string; color: string } => item !== null);
 
-    return sanitized.length ? sanitized : fallback;
+    return ensureOtherCategory(sanitized.length ? sanitized : fallback);
   } catch {
-    return fallback;
+    return ensureOtherCategory(fallback);
   }
 }
 
@@ -165,7 +177,11 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   );
 
   const resetAllData = useCallback(async () => {
-    await clearAllBlocks();
+    await Promise.all([
+      clearAllBlocks(),
+      setMetaValue(META_KEYS.categories, JSON.stringify(DEFAULT_CATEGORIES)),
+    ]);
+    setSettings((current) => ({ ...current, categories: DEFAULT_CATEGORIES }));
     setDataVersion((current) => current + 1);
   }, []);
 

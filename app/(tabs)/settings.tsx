@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
   Alert,
-  Modal,
   Keyboard,
+  Linking,
+  Modal,
   Pressable,
   ScrollView,
   Switch,
@@ -14,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
+import { LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { seedLastNDays } from '@/src/dev/seedData';
@@ -28,6 +30,7 @@ const CATEGORY_COLORS = [
   '#94A3B8',
   '#EF4444',
 ];
+const SHEET_VISIBLE_HEIGHT = '86%';
 
 function normalizeCategoryId(input: string): string {
   const normalized = input.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
@@ -43,6 +46,9 @@ export default function SettingsScreen() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingCategoryColor, setEditingCategoryColor] = useState(CATEGORY_COLORS[0]);
+  const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
+
+  const activeLegalDoc = LEGAL_DOCUMENTS.find((document) => document.key === activeLegalDocKey) ?? null;
 
   const addCategory = async () => {
     const label = categoryName.trim();
@@ -73,6 +79,11 @@ export default function SettingsScreen() {
   };
 
   const removeCategory = async (id: string) => {
+    if (id === 'other') {
+      Alert.alert('Protected category', 'The None category cannot be deleted.');
+      return;
+    }
+
     if (settings.categories.length <= 1) {
       Alert.alert('At least one category', 'Keep at least one category.');
       return;
@@ -134,7 +145,7 @@ export default function SettingsScreen() {
   const confirmResetAllData = () => {
     Alert.alert(
       'Reset all data',
-      'This will permanently delete all plan and done blocks on every day. This cannot be undone.',
+      'This will permanently delete all plan and done blocks on every day and reset categories to defaults. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -146,7 +157,7 @@ export default function SettingsScreen() {
 
               try {
                 await resetAllData();
-                Alert.alert('Data reset', 'All blocks were deleted.');
+                Alert.alert('Data reset', 'All blocks were deleted and categories were reset.');
               } catch {
                 Alert.alert('Storage error', 'Could not reset data.');
               } finally {
@@ -196,6 +207,49 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const openSupportEmail = () => {
+    void (async () => {
+      const subject = encodeURIComponent('Plan vs Actual Support');
+      const url = `mailto:${SUPPORT_EMAIL}?subject=${subject}`;
+
+      try {
+        const supported = await Linking.canOpenURL(url);
+        if (!supported) {
+          Alert.alert('Email unavailable', `Please contact us at ${SUPPORT_EMAIL}.`);
+          return;
+        }
+
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert('Email unavailable', `Please contact us at ${SUPPORT_EMAIL}.`);
+      }
+    })();
+  };
+
+  const openPublicUrl = (url: string | null) => {
+    if (!url) {
+      Alert.alert(
+        'Public URL not configured',
+        'Set a public URL for this document before App Store submission.'
+      );
+      return;
+    }
+
+    void (async () => {
+      try {
+        const supported = await Linking.canOpenURL(url);
+        if (!supported) {
+          Alert.alert('Cannot open link', 'Please verify the URL configuration.');
+          return;
+        }
+
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert('Cannot open link', 'Please verify the URL configuration.');
+      }
+    })();
   };
 
   return (
@@ -287,14 +341,14 @@ export default function SettingsScreen() {
                   style={styles.debugButton}
                   onPress={() => confirmSeedData(7)}
                   disabled={saving}>
-                  <Text style={styles.debugButtonText}>Populate 7 days of sample data</Text>
+                  <Text style={styles.debugButtonText}>Populate 7 days of dense sample data</Text>
                 </Pressable>
                 <Pressable
                   accessibilityLabel="Populate calendar with sample data for 30 days"
                   style={styles.debugButton}
                   onPress={() => confirmSeedData(30)}
                   disabled={saving}>
-                  <Text style={styles.debugButtonText}>Populate 30 days of sample data</Text>
+                  <Text style={styles.debugButtonText}>Populate 30 days of dense sample data</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -308,6 +362,33 @@ export default function SettingsScreen() {
               disabled={saving}>
               <Text style={styles.resetButtonText}>Reset all data</Text>
             </Pressable>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Legal & Support</Text>
+            <Text style={styles.toggleHint}>Required links for App Store review.</Text>
+            <View style={styles.listGroup}>
+              {LEGAL_DOCUMENTS.map((document) => (
+                <Pressable
+                  key={document.key}
+                  accessibilityLabel={`Open ${document.title}`}
+                  style={[styles.listRow, styles.legalRow]}
+                  onPress={() => setActiveLegalDocKey(document.key)}>
+                  <View style={styles.legalRowCopy}>
+                    <Text style={styles.categoryName}>{document.title}</Text>
+                    <Text style={styles.legalSummary}>{document.summary}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
+                </Pressable>
+              ))}
+              <Pressable accessibilityLabel="Contact support by email" style={[styles.listRow, styles.legalRow]} onPress={openSupportEmail}>
+                <View style={styles.legalRowCopy}>
+                  <Text style={styles.categoryName}>Contact Email</Text>
+                  <Text style={styles.legalSummary}>{SUPPORT_EMAIL}</Text>
+                </View>
+                <Ionicons name="mail-outline" size={16} color={UI_COLORS.neutralTextSoft} />
+              </Pressable>
+            </View>
           </View>
           </ScrollView>
         </View>
@@ -355,15 +436,60 @@ export default function SettingsScreen() {
                 </Pressable>
                 <Pressable
                   style={styles.editorDeleteButton}
-                  disabled={saving || !editingCategoryId}
+                  disabled={saving || !editingCategoryId || editingCategoryId === 'other'}
                   onPress={() => {
                     if (editingCategoryId) {
                       void removeCategory(editingCategoryId);
                       closeCategoryEditor();
                     }
                   }}>
-                  <Text style={styles.editorDeleteButtonText}>Delete</Text>
+                  <Text style={styles.editorDeleteButtonText}>
+                    {editingCategoryId === 'other' ? 'Protected' : 'Delete'}
+                  </Text>
                 </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={activeLegalDoc !== null}
+        onRequestClose={() => setActiveLegalDocKey(null)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setActiveLegalDocKey(null)} />
+          <View style={styles.keyboardLift}>
+            <View style={styles.editorCard}>
+              <View style={styles.sheetHeaderRow}>
+                <Text style={styles.sheetTitle}>{activeLegalDoc?.title ?? ''}</Text>
+                <Pressable
+                  accessibilityLabel="Close legal document"
+                  style={styles.sheetCloseButton}
+                  onPress={() => setActiveLegalDocKey(null)}>
+                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                </Pressable>
+              </View>
+              <ScrollView style={styles.legalScroll} contentContainerStyle={styles.legalBody}>
+                {(activeLegalDoc?.sections ?? []).map((section) => (
+                  <Text key={section} style={styles.legalParagraph}>
+                    {section}
+                  </Text>
+                ))}
+              </ScrollView>
+              <View style={styles.editorActions}>
+                {activeLegalDoc?.publicUrl ? (
+                  <Pressable
+                    style={styles.editorSaveButton}
+                    onPress={() => openPublicUrl(activeLegalDoc.publicUrl)}>
+                    <Text style={styles.editorSaveButtonText}>Open public URL</Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.legalPublicUrlHint}>
+                    <Text style={styles.legalSummary}>Public URL not configured yet.</Text>
+                  </View>
+                )}
               </View>
             </View>
           </View>
@@ -383,7 +509,7 @@ const styles = StyleSheet.create({
     backgroundColor: UI_COLORS.overlay,
   },
   sheetCard: {
-    maxHeight: '86%',
+    height: SHEET_VISIBLE_HEIGHT,
     backgroundColor: UI_COLORS.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
     borderTopRightRadius: UI_RADIUS.sheet,
@@ -569,6 +695,43 @@ const styles = StyleSheet.create({
     color: '#991B1B',
     fontSize: 13,
     fontWeight: '700',
+  },
+  legalRow: {
+    paddingVertical: 10,
+  },
+  legalRowCopy: {
+    flex: 1,
+    gap: 2,
+    paddingRight: 8,
+  },
+  legalSummary: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  legalScroll: {
+    maxHeight: 280,
+  },
+  legalBody: {
+    gap: 10,
+    paddingBottom: 6,
+  },
+  legalParagraph: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+  },
+  legalPublicUrlHint: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    backgroundColor: UI_COLORS.surfaceMuted,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
   editorCard: {
     marginHorizontal: 16,

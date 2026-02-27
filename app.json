@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "plan-vs-actual",
+    "name": "Plan vs Actual",
     "slug": "plan-vs-actual",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.planvsactual"
+      "bundleIdentifier": "com.planvsactual.app"
     },
     "android": {
       "adaptiveIcon": {

@@ -68,6 +68,7 @@ export const CATEGORY_COLORS = {
   break: '#F59E0B',
   admin: '#94A3B8',
   personal: '#14B8A6',
+  other: '#9CA3AF',
   uncategorized: '#94A3B8',
 } as const;
 
@@ -115,6 +116,9 @@ export function getCategoryLabel(tag?: string): string {
   }
   if (normalized === 'personal') {
     return 'Personal';
+  }
+  if (normalized === 'other') {
+    return 'None';
   }
 
   return 'Uncategorized';

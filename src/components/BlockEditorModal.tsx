@@ -21,9 +21,10 @@ type PlannedLinkOption = {
   title: string;
   startMin: number;
   endMin: number;
+  tags: string[];
 };
 
-type PickerType = 'startTime' | 'endTime' | 'duration' | null;
+type PickerType = 'startTime' | 'endTime' | null;
 
 type BlockEditorModalProps = {
   visible: boolean;
@@ -34,7 +35,7 @@ type BlockEditorModalProps = {
   startValue: string;
   endValue: string;
   linkedPlannedId: string | null;
-  categoryOptions: Array<{ id: string; label: string; color: string }>;
+  categoryOptions: { id: string; label: string; color: string }[];
   plannedLinkOptions: PlannedLinkOption[];
   errorText: string | null;
   saveDisabled?: boolean;
@@ -56,29 +57,16 @@ const CATEGORY_OPTIONS = [
   { label: 'Meeting', id: 'meeting', color: '#0EA5A4' },
   { label: 'Personal', id: 'personal', color: '#14B8A6' },
   { label: 'Break', id: 'break', color: '#F59E0B' },
+  { label: 'None', id: 'other', color: '#9CA3AF' },
 ] as const;
 
-const START_HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => ({
-  label:
-    hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`,
-  value: hour,
-}));
 const START_MINUTE_OPTIONS = [0, 15, 30, 45];
-const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120, 180];
+const SHEET_VISIBLE_HEIGHT = '86%';
 
-function toDurationLabel(minutes: number): string {
-  if (minutes < 60) {
-    return `${minutes} min`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-
-  if (rest === 0) {
-    return `${hours} hr`;
-  }
-
-  return `${hours} hr ${rest} min`;
+function toTimeLabel(hour24: number, minute: number): string {
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
 function getStartAndDuration(startValue: string, endValue: string): { startMin: number; durationMin: number } {
@@ -122,19 +110,47 @@ export function BlockEditorModal({
   const [wheelPeriod, setWheelPeriod] = useState<'AM' | 'PM'>('AM');
   const [wheelDuration, setWheelDuration] = useState(60);
 
-  const resolvedCategoryOptions = categoryOptions.length ? categoryOptions : [...CATEGORY_OPTIONS];
+  const resolvedCategoryOptions = useMemo(
+    () => (categoryOptions.length ? categoryOptions : [...CATEGORY_OPTIONS]),
+    [categoryOptions]
+  );
   const unknownTags = useMemo(() => {
     const knownIds = new Set(resolvedCategoryOptions.map((category) => category.id));
     return selectedTags.filter((tag) => !knownIds.has(tag));
   }, [resolvedCategoryOptions, selectedTags]);
-  const linkedOption = useMemo(
-    () => plannedLinkOptions.find((option) => option.id === linkedPlannedId) ?? null,
-    [linkedPlannedId, plannedLinkOptions]
+  const categoryRenderOptions = useMemo(
+    () => [...resolvedCategoryOptions, ...unknownTags.map((tag) => ({ label: tag, id: tag, color: '#94A3B8' }))],
+    [resolvedCategoryOptions, unknownTags]
   );
-  const linkControlDisabled = plannedLinkOptions.length === 0;
-  const linkedLabel = linkedOption
-    ? `${linkedOption.title} (${formatHHMM(linkedOption.startMin)}-${formatHHMM(linkedOption.endMin)})`
-    : 'None';
+  const selectedCategoryId = selectedTags[0]?.toLowerCase() ?? null;
+  const selectedCategoryLabel =
+    resolvedCategoryOptions.find((option) => option.id.toLowerCase() === selectedCategoryId)?.label ?? null;
+  const categoryMatchedOptions = useMemo(() => {
+    if (!selectedCategoryId) {
+      return [];
+    }
+
+    return plannedLinkOptions.filter(
+      (option) => option.tags[0]?.toLowerCase() === selectedCategoryId
+    );
+  }, [plannedLinkOptions, selectedCategoryId]);
+  const selectedCategoryIndex = useMemo(
+    () =>
+      selectedCategoryId
+        ? categoryRenderOptions.findIndex((option) => option.id.toLowerCase() === selectedCategoryId)
+        : -1,
+    [categoryRenderOptions, selectedCategoryId]
+  );
+  const selectedCategoryRowIndex = selectedCategoryIndex >= 0 ? Math.floor(selectedCategoryIndex / 2) : -1;
+  const categoryRows = useMemo(() => {
+    const rows: typeof categoryRenderOptions[] = [];
+
+    for (let index = 0; index < categoryRenderOptions.length; index += 2) {
+      rows.push(categoryRenderOptions.slice(index, index + 2));
+    }
+
+    return rows;
+  }, [categoryRenderOptions]);
   const timeState = getStartAndDuration(startValue, endValue);
   const selectedHour = Math.floor(timeState.startMin / 60);
   const selectedMinute = timeState.startMin % 60;
@@ -194,39 +210,38 @@ export function BlockEditorModal({
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.backdrop}>
         <Pressable style={styles.dismissLayer} onPress={onCancel} />
-        <View style={styles.keyboardLift}>
-          <View style={styles.card}>
-            <View style={styles.grabber} />
-            <View style={styles.headerRow}>
-              <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>
-              <Pressable accessibilityLabel="Close editor" style={styles.closeButton} onPress={onCancel}>
-                <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
-              </Pressable>
-            </View>
-            <View style={styles.headerLaneRow}>
-              {(['planned', 'actual'] as Lane[]).map((value) => {
-                const selected = lane === value;
+        <View style={styles.card}>
+          <View style={styles.grabber} />
+          <View style={styles.headerRow}>
+            <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>
+            <Pressable accessibilityLabel="Close editor" style={styles.closeButton} onPress={onCancel}>
+              <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+            </Pressable>
+          </View>
+          <View style={styles.headerLaneRow}>
+            {(['planned', 'actual'] as Lane[]).map((value) => {
+              const selected = lane === value;
 
-                return (
-                  <Pressable
-                    key={`header-${value}`}
-                    accessibilityLabel={`Set type ${value === 'planned' ? 'plan' : 'done'}`}
-                    style={[styles.headerLaneChip, selected && styles.headerLaneChipSelected]}
-                    onPress={() => onChangeLane(value)}>
-                    <Text style={[styles.headerLaneChipText, selected && styles.headerLaneChipTextSelected]}>
-                      {value === 'planned' ? 'Plan' : 'Done'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+              return (
+                <Pressable
+                  key={`header-${value}`}
+                  accessibilityLabel={`Set type ${value === 'planned' ? 'plan' : 'done'}`}
+                  style={[styles.headerLaneChip, selected && styles.headerLaneChipSelected]}
+                  onPress={() => onChangeLane(value)}>
+                  <Text style={[styles.headerLaneChipText, selected && styles.headerLaneChipTextSelected]}>
+                    {value === 'planned' ? 'Plan' : 'Done'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.formBody}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-              onScrollBeginDrag={() => Keyboard.dismiss()}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.formBody}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            onScrollBeginDrag={() => Keyboard.dismiss()}>
             <Text style={styles.label}>Title</Text>
             <TextInput
               value={titleValue}
@@ -237,37 +252,12 @@ export function BlockEditorModal({
               placeholderTextColor={UI_COLORS.neutralTextSoft}
             />
 
-            <Text style={styles.label}>Category</Text>
-            <View style={styles.categoryGrid}>
-              {[...resolvedCategoryOptions, ...unknownTags.map((tag) => ({ label: tag, id: tag, color: '#94A3B8' }))].map((option) => {
-                const selected = selectedTags.includes(option.id);
-
-                return (
-                  <Pressable
-                    key={option.id}
-                    accessibilityLabel={`Select category ${option.label}`}
-                    style={[styles.categoryChip, selected && styles.categoryChipSelected]}
-                    onPress={() => onToggleTag(option.id)}>
-                    <View style={[styles.categoryDot, { backgroundColor: option.color }]} />
-                    <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
             <View style={styles.timeControlRow}>
               <View style={styles.timeColumn}>
                 <Text style={styles.label}>Start Time</Text>
                 <View style={styles.startControlGroup}>
                   <Pressable style={styles.dropdown} onPress={() => setPickerType('startTime')}>
-                    <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedHour]?.label ?? '8 AM'}</Text>
-                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                  </Pressable>
-                  <Text style={styles.timeColon}>:</Text>
-                  <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('startTime')}>
-                    <Text style={styles.dropdownText}>{String(selectedMinute).padStart(2, '0')}</Text>
+                    <Text style={styles.dropdownText}>{toTimeLabel(selectedHour, selectedMinute)}</Text>
                     <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
                   </Pressable>
                 </View>
@@ -276,64 +266,118 @@ export function BlockEditorModal({
                 <Text style={styles.label}>End Time</Text>
                 <View style={styles.startControlGroup}>
                   <Pressable style={styles.dropdown} onPress={() => setPickerType('endTime')}>
-                    <Text style={styles.dropdownText}>{START_HOUR_OPTIONS[selectedEndHour]?.label ?? '9 AM'}</Text>
-                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-                  </Pressable>
-                  <Text style={styles.timeColon}>:</Text>
-                  <Pressable style={styles.dropdownMinute} onPress={() => setPickerType('endTime')}>
-                    <Text style={styles.dropdownText}>{String(selectedEndMinute).padStart(2, '0')}</Text>
+                    <Text style={styles.dropdownText}>{toTimeLabel(selectedEndHour, selectedEndMinute)}</Text>
                     <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
                   </Pressable>
                 </View>
               </View>
             </View>
 
-            <Text style={[styles.label, styles.durationLabel]}>Duration</Text>
-            <View style={styles.timeControlRow}>
-              <Pressable style={styles.durationControl} onPress={() => setPickerType('duration')}>
-                <Text style={styles.dropdownText}>{toDurationLabel(timeState.durationMin)}</Text>
-                <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
-              </Pressable>
-            </View>
+            <Text style={styles.label}>Category</Text>
+            <View style={styles.categoryGrid}>
+              {categoryRows.map((row, rowIndex) => (
+                <React.Fragment key={`category-row-${rowIndex}`}>
+                  <View style={styles.categoryGridRow}>
+                    {row.map((option) => {
+                      const selected = selectedTags.includes(option.id);
 
-            {lane === 'actual' ? (
-              <View style={styles.linkSection}>
-                <Text style={styles.label}>Counts toward</Text>
-                <Pressable
-                accessibilityLabel="Select plan block this counts toward"
-                  accessibilityRole="button"
-                  style={[styles.linkRow, linkControlDisabled && styles.linkRowDisabled]}
-                  onPress={() => setLinkPickerVisible(true)}
-                  disabled={linkControlDisabled}>
-                  <Text style={[styles.linkRowText, linkControlDisabled && styles.linkRowTextDisabled]} numberOfLines={1}>
-                    {linkControlDisabled ? 'None' : linkedLabel}
-                  </Text>
-                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
+                      return (
+                        <Pressable
+                          key={option.id}
+                          accessibilityLabel={`Select category ${option.label}`}
+                          style={[styles.categoryChip, selected && styles.categoryChipSelected]}
+                          onPress={() => onToggleTag(option.id)}>
+                          <View style={[styles.categoryDot, { backgroundColor: option.color }]} />
+                          <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                    {row.length < 2 ? <View style={styles.categoryChipSpacer} /> : null}
+                  </View>
+                  {lane === 'actual' && selectedCategoryId && selectedCategoryRowIndex === rowIndex ? (
+                    <View style={styles.inlineLinkSection}>
+                      <View style={styles.inlineLinkHeader}>
+                        <Text style={styles.label}>Counts toward</Text>
+                        <Pressable
+                          accessibilityLabel="Browse all plan blocks"
+                          accessibilityRole="button"
+                          onPress={() => setLinkPickerVisible(true)}>
+                          <Text style={styles.inlineLinkBrowse}>Browse all</Text>
+                        </Pressable>
+                      </View>
+                      {categoryMatchedOptions.length === 0 ? (
+                        <Text style={styles.inlineLinkEmpty}>
+                          No plan blocks found in {selectedCategoryLabel ?? 'this category'}.
+                        </Text>
+                      ) : (
+                        categoryMatchedOptions.map((option) => {
+                          const selected = option.id === linkedPlannedId;
+
+                          return (
+                            <Pressable
+                              key={`inline-link-${option.id}`}
+                              accessibilityLabel={`Count toward ${option.title}`}
+                              style={[styles.inlineLinkOption, selected && styles.inlineLinkOptionSelected]}
+                              onPress={() => onChangeLinkedPlannedId(selected ? null : option.id)}>
+                              <View style={styles.inlineLinkCopy}>
+                                <Text style={[styles.inlineLinkTitle, selected && styles.inlineLinkTitleSelected]} numberOfLines={1}>
+                                  {option.title}
+                                </Text>
+                                <Text style={styles.inlineLinkTime}>
+                                  {formatHHMM(option.startMin)}-{formatHHMM(option.endMin)}
+                                </Text>
+                              </View>
+                              <Ionicons
+                                name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                                size={18}
+                                color={selected ? UI_COLORS.planned : UI_COLORS.neutralTextSoft}
+                              />
+                            </Pressable>
+                          );
+                        })
+                      )}
+                    </View>
+                  ) : null}
+                </React.Fragment>
+              ))}
+            </View>
+            {lane === 'actual' && !selectedCategoryId ? (
+              <View style={styles.inlineLinkSection}>
+                <View style={styles.inlineLinkHeader}>
+                  <Text style={styles.label}>Counts toward</Text>
+                  <Pressable
+                    accessibilityLabel="Browse all plan blocks"
+                    accessibilityRole="button"
+                    onPress={() => setLinkPickerVisible(true)}>
+                    <Text style={styles.inlineLinkBrowse}>Browse all</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.inlineLinkEmpty}>Select a category to see matching plan blocks.</Text>
               </View>
             ) : null}
 
-            <Text style={styles.errorText}>{errorText ?? ' '}</Text>
-            </ScrollView>
-            <View style={styles.footerRow}>
-              {mode === 'edit' ? (
-                <Pressable
-                  accessibilityLabel="Delete block"
-                  style={[styles.secondaryButton, styles.deleteButton]}
-                  onPress={onDelete}>
-                  <Text style={styles.deleteButtonText}>Delete</Text>
-                </Pressable>
-              ) : null}
+          <Text style={styles.errorText}>{errorText ?? ' '}</Text>
+          </ScrollView>
+          <View style={styles.footerRow}>
+            {mode === 'edit' ? (
               <Pressable
-                accessibilityLabel={mode === 'create' ? 'Add block' : 'Save block'}
-                style={[styles.primaryButton, saveDisabled && styles.primaryButtonDisabled]}
-                onPress={onSave}
-                disabled={saveDisabled}>
-                <Text style={styles.primaryButtonText}>{mode === 'create' ? 'Add' : 'Save'}</Text>
+                accessibilityLabel="Delete block"
+                style={[styles.secondaryButton, styles.deleteButton]}
+                onPress={onDelete}>
+                <Text style={styles.deleteButtonText}>Delete</Text>
               </Pressable>
-            </View>
+            ) : null}
+            <Pressable
+              accessibilityLabel={mode === 'create' ? 'Add block' : 'Save block'}
+              style={[styles.primaryButton, saveDisabled && styles.primaryButtonDisabled]}
+              onPress={onSave}
+              disabled={saveDisabled}>
+              <Text style={styles.primaryButtonText}>{mode === 'create' ? 'Add' : 'Save'}</Text>
+            </Pressable>
           </View>
-        </View>
+          </View>
       </View>
 
       <Modal
@@ -386,67 +430,48 @@ export function BlockEditorModal({
           <Pressable style={styles.pickerDismissLayer} onPress={() => setPickerType(null)} />
           <View style={styles.pickerCard}>
             <Text style={styles.pickerTitle}>
-              {pickerType === 'duration'
-                ? 'Duration'
-                : pickerType === 'endTime'
-                  ? 'End Time'
-                  : 'Start Time'}
+              {pickerType === 'endTime' ? 'End Time' : 'Start Time'}
             </Text>
-            {pickerType === 'duration' ? (
-              <View style={styles.pickerWheelWrap}>
+            <View style={styles.pickerWheelRow}>
+              <View style={styles.pickerWheelColumn}>
                 <Picker
-                  selectedValue={wheelDuration}
-                  onValueChange={(nextDuration) => {
-                    setWheelDuration(Number(nextDuration));
-                    applyStartAndDuration(timeState.startMin, Number(nextDuration));
+                  selectedValue={wheelHour}
+                  onValueChange={(nextHour) => {
+                    const value = Number(nextHour);
+                    setWheelHour(value);
+                    applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', value, wheelMinute, wheelPeriod);
                   }}>
-                  {DURATION_OPTIONS.map((value) => (
-                    <Picker.Item key={`duration-wheel-${value}`} label={toDurationLabel(value)} value={value} />
+                  {Array.from({ length: 12 }, (_, index) => (
+                    <Picker.Item key={`hour-wheel-${index + 1}`} label={String(index + 1)} value={index + 1} />
                   ))}
                 </Picker>
               </View>
-            ) : (
-              <View style={styles.pickerWheelRow}>
-                <View style={styles.pickerWheelColumn}>
-                  <Picker
-                    selectedValue={wheelHour}
-                    onValueChange={(nextHour) => {
-                      const value = Number(nextHour);
-                      setWheelHour(value);
-                      applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', value, wheelMinute, wheelPeriod);
-                    }}>
-                    {Array.from({ length: 12 }, (_, index) => (
-                      <Picker.Item key={`hour-wheel-${index + 1}`} label={String(index + 1)} value={index + 1} />
-                    ))}
-                  </Picker>
-                </View>
-                <View style={styles.pickerWheelColumn}>
-                  <Picker
-                    selectedValue={wheelMinute}
-                    onValueChange={(nextMinute) => {
-                      const value = Number(nextMinute);
-                      setWheelMinute(value);
-                      applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, value, wheelPeriod);
-                    }}>
-                    {START_MINUTE_OPTIONS.map((value) => (
-                      <Picker.Item key={`minute-wheel-${value}`} label={String(value).padStart(2, '0')} value={value} />
-                    ))}
-                  </Picker>
-                </View>
-                <View style={styles.pickerWheelColumn}>
-                  <Picker
-                    selectedValue={wheelPeriod}
-                    onValueChange={(nextPeriod) => {
-                      const value = nextPeriod === 'AM' ? 'AM' : 'PM';
-                      setWheelPeriod(value);
-                      applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, wheelMinute, value);
-                    }}>
-                    <Picker.Item label="AM" value="AM" />
-                    <Picker.Item label="PM" value="PM" />
-                  </Picker>
-                </View>
+              <View style={styles.pickerWheelColumn}>
+                <Picker
+                  selectedValue={wheelMinute}
+                  onValueChange={(nextMinute) => {
+                    const value = Number(nextMinute);
+                    setWheelMinute(value);
+                    applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, value, wheelPeriod);
+                  }}>
+                  {START_MINUTE_OPTIONS.map((value) => (
+                    <Picker.Item key={`minute-wheel-${value}`} label={String(value).padStart(2, '0')} value={value} />
+                  ))}
+                </Picker>
               </View>
-            )}
+              <View style={styles.pickerWheelColumn}>
+                <Picker
+                  selectedValue={wheelPeriod}
+                  onValueChange={(nextPeriod) => {
+                    const value = nextPeriod === 'AM' ? 'AM' : 'PM';
+                    setWheelPeriod(value);
+                    applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, wheelMinute, value);
+                  }}>
+                  <Picker.Item label="AM" value="AM" />
+                  <Picker.Item label="PM" value="PM" />
+                </Picker>
+              </View>
+            </View>
             <Pressable style={styles.pickerDoneButton} onPress={() => setPickerType(null)}>
               <Text style={styles.pickerDoneText}>Done</Text>
             </Pressable>
@@ -466,17 +491,14 @@ const styles = StyleSheet.create({
   dismissLayer: {
     flex: 1,
   },
-  keyboardLift: {
-    justifyContent: 'flex-end',
-  },
   card: {
+    height: SHEET_VISIBLE_HEIGHT,
     backgroundColor: UI_COLORS.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
     borderTopRightRadius: UI_RADIUS.sheet,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 18,
-    maxHeight: '90%',
     shadowColor: '#111827',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.12,
@@ -559,12 +581,15 @@ const styles = StyleSheet.create({
     backgroundColor: UI_COLORS.surface,
   },
   categoryGrid: {
+    flexDirection: 'column',
+    gap: 10,
+  },
+  categoryGridRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
   },
   categoryChip: {
-    width: '48%',
+    flex: 1,
     borderWidth: 1,
     borderColor: UI_COLORS.neutralBorder,
     borderRadius: UI_RADIUS.control,
@@ -578,6 +603,9 @@ const styles = StyleSheet.create({
   categoryChipSelected: {
     borderColor: UI_COLORS.neutralText,
     backgroundColor: '#F9FAFB',
+  },
+  categoryChipSpacer: {
+    flex: 1,
   },
   categoryChipText: {
     color: UI_COLORS.neutralText,
@@ -596,9 +624,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
-  durationLabel: {
-    marginTop: 4,
-  },
   timeColumn: {
     flex: 1,
     gap: 6,
@@ -606,33 +631,8 @@ const styles = StyleSheet.create({
   startControlGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
   },
   dropdown: {
-    flex: 1,
-    minHeight: 42,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    borderRadius: UI_RADIUS.control,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: UI_COLORS.surface,
-  },
-  dropdownMinute: {
-    width: 76,
-    minHeight: 42,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    borderRadius: UI_RADIUS.control,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: UI_COLORS.surface,
-  },
-  durationControl: {
     flex: 1,
     minHeight: 42,
     borderWidth: 1,
@@ -649,11 +649,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  timeColon: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 16,
-    fontWeight: '700',
-  },
   errorText: {
     minHeight: 18,
     color: '#B91C1C',
@@ -662,6 +657,62 @@ const styles = StyleSheet.create({
   linkSection: {
     gap: 6,
     marginTop: 2,
+  },
+  inlineLinkSection: {
+    gap: 6,
+    marginTop: 2,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    padding: 10,
+    backgroundColor: UI_COLORS.surface,
+  },
+  inlineLinkHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  inlineLinkBrowse: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inlineLinkOption: {
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: UI_COLORS.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  inlineLinkOptionSelected: {
+    borderColor: UI_COLORS.planned,
+    backgroundColor: UI_COLORS.plannedTint,
+  },
+  inlineLinkCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  inlineLinkTitle: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  inlineLinkTitleSelected: {
+    color: UI_COLORS.neutralText,
+  },
+  inlineLinkTime: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  inlineLinkEmpty: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
   },
   linkRow: {
     borderWidth: 1,

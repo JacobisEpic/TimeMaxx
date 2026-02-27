@@ -50,6 +50,23 @@ type QuickPreset = {
   tags: string[];
 };
 
+type ScorecardMetrics = {
+  plannedMinutes: number;
+  doneMinutes: number;
+  executionDoneMinutes: number;
+  executionScorePercent: number;
+};
+
+type CategoryVarianceRow = {
+  tag: string;
+  label: string;
+  color: string;
+  plannedMinutes: number;
+  doneMinutes: number;
+  deltaMinutes: number;
+  deltaPercent: number;
+};
+
 type DraftCreateState = {
   anchorMin: number;
   startMin: number;
@@ -67,11 +84,10 @@ type DraftCandidate = {
 const MINUTES_PER_DAY = 24 * 60;
 const TIMELINE_HEIGHT = MINUTES_PER_DAY * PIXELS_PER_MINUTE;
 const TIME_GUTTER_WIDTH = 54;
+const SHEET_VISIBLE_HEIGHT = '86%';
 const NOW_BUBBLE_HEIGHT = 20;
 const NOW_COLOR = '#FF3B30';
 const NOW_LINE_CONNECT_OFFSET = 4;
-const DEFAULT_VIEWPORT_HOURS = 10;
-const VIEWPORT_HEIGHT = DEFAULT_VIEWPORT_HOURS * 60 * PIXELS_PER_MINUTE;
 const FEEDBACK_DURATION_MS = 1500;
 const CREATE_THRESHOLD_PX = 16;
 const CREATE_DELAY_MS = 260;
@@ -174,7 +190,7 @@ function matchesTagFilter(block: TimeBlock, tagFilter: TagFilter): boolean {
 
 function buildTagTotals(
   blocks: TimeBlock[]
-): Array<{ tag: string; plannedMin: number; actualMin: number; deltaMin: number }> {
+): { tag: string; plannedMin: number; actualMin: number; deltaMin: number }[] {
   const totals = new Map<string, { plannedMin: number; actualMin: number }>();
 
   blocks.forEach((block) => {
@@ -230,44 +246,26 @@ function minutesToHM(minutes: number): string {
   return `${hours}h ${restMinutes}m`;
 }
 
-function computeFulfillment(
-  plannedBlocks: TimeBlock[],
-  actualBlocks: TimeBlock[]
-): Array<{
-  plannedId: string;
-  title: string;
-  startMin: number;
-  endMin: number;
-  plannedMinutes: number;
-  linkedActualMinutes: number;
-  fulfillmentPercent: number;
-}> {
-  return sortByStartMin(plannedBlocks).map((planned) => {
-    const plannedMinutes = Math.max(0, planned.endMin - planned.startMin);
-    const linkedActualMinutes = actualBlocks.reduce((sum, actual) => {
-      if (actual.linkedPlannedId !== planned.id) {
-        return sum;
-      }
+function formatSignedMinutes(minutes: number): string {
+  const prefix = minutes >= 0 ? '+' : '-';
+  return `${prefix}${minutesToHM(Math.abs(minutes))}`;
+}
 
-      return sum + Math.max(0, actual.endMin - actual.startMin);
-    }, 0);
+function computeDeltaPercent(doneMinutes: number, plannedMinutes: number): number {
+  if (plannedMinutes <= 0) {
+    return doneMinutes > 0 ? 100 : 0;
+  }
 
-    const rawPercent = plannedMinutes > 0 ? (linkedActualMinutes / plannedMinutes) * 100 : 0;
-
-    return {
-      plannedId: planned.id,
-      title: planned.title,
-      startMin: planned.startMin,
-      endMin: planned.endMin,
-      plannedMinutes,
-      linkedActualMinutes,
-      fulfillmentPercent: Math.min(100, Math.round(rawPercent)),
-    };
-  });
+  return Math.round(((doneMinutes - plannedMinutes) / plannedMinutes) * 100);
 }
 
 function getCategoryKey(block: TimeBlock): string {
   return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
+}
+
+function isExcludedFromMetrics(block: TimeBlock): boolean {
+  const key = getCategoryKey(block);
+  return key === 'other' || key === 'none';
 }
 
 function toSingleCategory(tags: string[]): string[] {
@@ -344,10 +342,14 @@ async function triggerSuccessHaptic(): Promise<void> {
 
 export default function DayTimeline() {
   const router = useRouter();
-  const { settings, loading: settingsLoading, updateSettings, dataVersion } = useAppSettings();
+  const { settings, loading: settingsLoading, dataVersion } = useAppSettings();
 
   const [dayKey, setDayKey] = useState(getLocalDayKey());
-  const [reloadTick, setReloadTick] = useState(0);
+  const [dataReloadTick, setDataReloadTick] = useState(0);
+  const [clockMinute, setClockMinute] = useState(() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  });
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
@@ -360,8 +362,8 @@ export default function DayTimeline() {
   });
   const [tagFilter, setTagFilter] = useState<TagFilter>('all');
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
+  const [actionsMenuVisible, setActionsMenuVisible] = useState(false);
   const [focusedPlannedId, setFocusedPlannedId] = useState<string | null>(null);
-  const [tagBreakdownExpanded, setTagBreakdownExpanded] = useState(false);
   const [quickAddExpanded, setQuickAddExpanded] = useState(false);
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
@@ -415,9 +417,17 @@ export default function DayTimeline() {
     () => sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned')),
     [sortedBlocks]
   );
-  const actualBlocks = useMemo(
-    () => sortByStartMin(sortedBlocks.filter((block) => block.lane === 'actual')),
+  const metricBlocks = useMemo(
+    () => sortedBlocks.filter((block) => !isExcludedFromMetrics(block)),
     [sortedBlocks]
+  );
+  const metricPlannedBlocks = useMemo(
+    () => sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned')),
+    [metricBlocks]
+  );
+  const metricActualBlocks = useMemo(
+    () => sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual')),
+    [metricBlocks]
   );
   const plannedLinkOptions = useMemo(
     () =>
@@ -426,6 +436,7 @@ export default function DayTimeline() {
         title: block.title,
         startMin: block.startMin,
         endMin: block.endMin,
+        tags: block.tags,
       })),
     [plannedBlocks]
   );
@@ -446,92 +457,97 @@ export default function DayTimeline() {
       }, {}),
     [categoryOptions]
   );
-  const fulfillmentRows = useMemo(
-    () => computeFulfillment(plannedBlocks, actualBlocks),
-    [actualBlocks, plannedBlocks]
-  );
-  const linkedActualTotals = useMemo(() => {
-    const linked = actualBlocks.filter((block) => block.linkedPlannedId);
-    const linkedMinutes = linked.reduce((sum, block) => sum + Math.max(0, block.endMin - block.startMin), 0);
-
-    return { linkedMinutes, linkedBlocks: linked.length };
-  }, [actualBlocks]);
-  const categoryRows = useMemo(() => {
+  const categoryVarianceRows = useMemo<CategoryVarianceRow[]>(() => {
     const totals = new Map<string, { planned: number; actual: number }>();
 
-    plannedBlocks.forEach((block) => {
+    metricPlannedBlocks.forEach((block) => {
       const key = getCategoryKey(block);
       const value = totals.get(key) ?? { planned: 0, actual: 0 };
       value.planned += Math.max(0, block.endMin - block.startMin);
       totals.set(key, value);
     });
 
-    actualBlocks.forEach((block) => {
+    metricActualBlocks.forEach((block) => {
       const key = getCategoryKey(block);
       const value = totals.get(key) ?? { planned: 0, actual: 0 };
       value.actual += Math.max(0, block.endMin - block.startMin);
       totals.set(key, value);
     });
 
-    const rows = [...totals.entries()].map(([tag, value]) => ({
+    return [...totals.entries()]
+      .map(([tag, value]) => ({
       tag,
       label: categoryLabelMap[tag] ?? getCategoryLabel(tag),
       color: categoryColorMap[tag] ?? getCategoryColor(tag),
       plannedMinutes: value.planned,
-      actualMinutes: value.actual,
-      maxMinutes: Math.max(value.planned, value.actual),
-    }));
+      doneMinutes: value.actual,
+      deltaMinutes: value.actual - value.planned,
+      deltaPercent: computeDeltaPercent(value.actual, value.planned),
+    }))
+      .sort((a, b) => Math.abs(b.deltaMinutes) - Math.abs(a.deltaMinutes) || a.label.localeCompare(b.label));
+  }, [categoryColorMap, categoryLabelMap, metricActualBlocks, metricPlannedBlocks]);
+  const nowMinute = clockMinute;
 
-    const maxCategoryMinutes = rows.reduce((max, row) => Math.max(max, row.maxMinutes), 0);
-
-    return rows
-      .sort((a, b) => b.maxMinutes - a.maxMinutes || a.label.localeCompare(b.label))
-      .map((row) => ({
-        ...row,
-        plannedRatio: maxCategoryMinutes > 0 ? row.plannedMinutes / maxCategoryMinutes : 0,
-        actualRatio: maxCategoryMinutes > 0 ? row.actualMinutes / maxCategoryMinutes : 0,
-      }));
-  }, [actualBlocks, categoryColorMap, categoryLabelMap, plannedBlocks]);
-  const nowMinute = useMemo(() => {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-  }, [dayKey, reloadTick]);
-
-  const { plannedTotalMin, actualTotalMin, deltaMin } = useMemo(() => {
-    const totals = sortedBlocks.reduce(
+  const { plannedTotalMin, doneTotalMin } = useMemo(() => {
+    const totals = metricBlocks.reduce(
       (acc, block) => {
         const duration = Math.max(0, block.endMin - block.startMin);
 
         if (block.lane === 'planned') {
           acc.plannedTotalMin += duration;
         } else {
-          acc.actualTotalMin += duration;
+          acc.doneTotalMin += duration;
         }
 
         return acc;
       },
-      { plannedTotalMin: 0, actualTotalMin: 0 }
+      { plannedTotalMin: 0, doneTotalMin: 0 }
     );
 
     return {
       plannedTotalMin: totals.plannedTotalMin,
-      actualTotalMin: totals.actualTotalMin,
-      deltaMin: totals.actualTotalMin - totals.plannedTotalMin,
+      doneTotalMin: totals.doneTotalMin,
     };
-  }, [sortedBlocks]);
+  }, [metricBlocks]);
 
-  const tagTotals = useMemo(() => buildTagTotals(sortedBlocks), [sortedBlocks]);
-  const visibleTagTotals = useMemo(() => tagTotals.slice(0, 5), [tagTotals]);
-  const overallFulfillmentPercent = useMemo(() => {
-    if (plannedTotalMin <= 0) {
-      return 0;
+  const tagTotals = useMemo(() => buildTagTotals(metricBlocks), [metricBlocks]);
+  const tagFilterOptions = useMemo(() => {
+    const options = new Set<TagFilter>(['all']);
+    tagTotals.forEach((row) => {
+      if ((TAG_CATALOG as readonly string[]).includes(row.tag)) {
+        options.add(row.tag as TagFilter);
+      }
+    });
+
+    for (const tag of TAG_CATALOG) {
+      if (options.size >= 6) {
+        break;
+      }
+      options.add(tag);
     }
 
-    return Math.min(100, Math.round((linkedActualTotals.linkedMinutes / plannedTotalMin) * 100));
-  }, [linkedActualTotals.linkedMinutes, plannedTotalMin]);
+    return [...options];
+  }, [tagTotals]);
+
+  const scorecardMetrics = useMemo<ScorecardMetrics>(() => {
+    const executionDoneMinutes = doneTotalMin;
+    const executionScoreRaw = plannedTotalMin > 0 ? (executionDoneMinutes / plannedTotalMin) * 100 : 0;
+
+    return {
+      plannedMinutes: plannedTotalMin,
+      doneMinutes: doneTotalMin,
+      executionDoneMinutes,
+      executionScorePercent: Math.min(100, Math.round(executionScoreRaw)),
+    };
+  }, [doneTotalMin, plannedTotalMin]);
+
+  const maxCategoryMinutes = useMemo(
+    () => categoryVarianceRows.reduce((max, row) => Math.max(max, row.plannedMinutes, row.doneMinutes), 0),
+    [categoryVarianceRows]
+  );
 
   const reloadCurrentDay = useCallback(() => {
-    setReloadTick((current) => current + 1);
+    setDataReloadTick((current) => current + 1);
   }, []);
 
   const syncTimelineViewportTop = useCallback(() => {
@@ -564,7 +580,7 @@ export default function DayTimeline() {
 
   useEffect(() => {
     setDayKey(getLocalDayKey());
-    setReloadTick((current) => current + 1);
+    setDataReloadTick((current) => current + 1);
   }, [dataVersion]);
 
   useEffect(() => {
@@ -599,7 +615,7 @@ export default function DayTimeline() {
         clearTimeout(feedbackTimerRef.current);
       }
     };
-  }, [dayKey, reloadTick, dataVersion]);
+  }, [dayKey, dataReloadTick, dataVersion]);
 
   useEffect(() => {
     if (autoScrolledDayKeyRef.current === dayKey) {
@@ -628,7 +644,8 @@ export default function DayTimeline() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setReloadTick((current) => current + 1);
+      const now = new Date();
+      setClockMinute(now.getHours() * 60 + now.getMinutes());
     }, 60_000);
 
     return () => clearInterval(timer);
@@ -1154,8 +1171,8 @@ export default function DayTimeline() {
   }, [isViewingToday, reloadCurrentDay, sortedBlocks, todayDayKey]);
 
   const shareDaySummary = useCallback(() => {
-    const plannedBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned'));
-    const actualBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === 'actual'));
+    const summaryPlannedBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned'));
+    const summaryActualBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual'));
 
     const tagLines = tagTotals.length
       ? tagTotals
@@ -1168,14 +1185,14 @@ export default function DayTimeline() {
           .join('\n')
       : 'none';
 
-    const plannedLines = plannedBlocks.length ? plannedBlocks.map(formatBlockLine).join('\n') : 'none';
-    const actualLines = actualBlocks.length ? actualBlocks.map(formatBlockLine).join('\n') : 'none';
+    const plannedLines = summaryPlannedBlocks.length ? summaryPlannedBlocks.map(formatBlockLine).join('\n') : 'none';
+    const actualLines = summaryActualBlocks.length ? summaryActualBlocks.map(formatBlockLine).join('\n') : 'none';
 
     const summary = [
       `Date: ${visibleDateLabel}`,
       `Plan total: ${formatDuration(plannedTotalMin)}`,
-      `Done total: ${formatDuration(actualTotalMin)}`,
-      `Delta: ${deltaMin >= 0 ? '+' : '-'}${formatDuration(deltaMin)}`,
+      `Done total: ${formatDuration(doneTotalMin)}`,
+      `Delta: ${doneTotalMin - plannedTotalMin >= 0 ? '+' : '-'}${formatDuration(doneTotalMin - plannedTotalMin)}`,
       '',
       'Tag totals:',
       tagLines,
@@ -1191,7 +1208,30 @@ export default function DayTimeline() {
       message: summary,
       title: `Day summary ${dayKey}`,
     });
-  }, [actualTotalMin, dayKey, deltaMin, plannedTotalMin, sortedBlocks, tagTotals, visibleDateLabel]);
+  }, [dayKey, doneTotalMin, metricBlocks, plannedTotalMin, tagTotals, visibleDateLabel]);
+
+  const showInsightsInfo = useCallback((section: 'execution' | 'totals' | 'categories') => {
+    if (section === 'execution') {
+      Alert.alert(
+        'Execution Score',
+        'Done time divided by planned time for today. None is excluded.'
+      );
+      return;
+    }
+
+    if (section === 'totals') {
+      Alert.alert(
+        'Planned vs Done',
+        'Planned and done totals for today, plus the delta between them. None is excluded.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Planned vs Done by Category',
+      'For each category, compare planned time versus done time. Bar lengths are scaled within today.'
+    );
+  }, []);
 
   const beginDraftCreation = useCallback(
     (lane: Lane, absoluteY: number) => {
@@ -1497,11 +1537,18 @@ export default function DayTimeline() {
         <Text style={styles.appTitle}>Plan vs Done</Text>
         <View style={styles.topActions}>
           <Pressable
-            accessibilityLabel="Open daily metrics"
+            accessibilityLabel="Open daily insights"
             accessibilityRole="button"
             style={styles.analyticsButton}
             onPress={() => setToolsSheetVisible(true)}>
             <Ionicons name="bar-chart-outline" size={18} color={UI_COLORS.neutralText} />
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Open timeline actions"
+            accessibilityRole="button"
+            style={styles.analyticsButton}
+            onPress={() => setActionsMenuVisible(true)}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={UI_COLORS.neutralText} />
           </Pressable>
           <Pressable
             accessibilityLabel="Open settings"
@@ -1532,18 +1579,29 @@ export default function DayTimeline() {
           <Ionicons name="calendar-outline" size={15} color={UI_COLORS.neutralTextSoft} />
           <Text style={styles.dateLabel}>{dateRowLabel}</Text>
         </View>
-        <Pressable
-          accessibilityLabel="Go to next day"
-          accessibilityRole="button"
-          style={[styles.dateNavButton, !canGoToNextDay && styles.dayNavButtonDisabled]}
-          onPress={goToNextDay}
-          disabled={!canGoToNextDay}>
-          <Ionicons
-            name="chevron-forward"
-            size={18}
-            color={canGoToNextDay ? UI_COLORS.neutralTextSoft : '#94A3B8'}
-          />
-        </Pressable>
+        <View style={styles.dateRightGroup}>
+          {!isViewingToday ? (
+            <Pressable
+              accessibilityLabel="Jump to today"
+              accessibilityRole="button"
+              style={styles.todayJumpButton}
+              onPress={goToToday}>
+              <Text style={styles.todayJumpButtonText}>Today</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityLabel="Go to next day"
+            accessibilityRole="button"
+            style={[styles.dateNavButton, !canGoToNextDay && styles.dayNavButtonDisabled]}
+            onPress={goToNextDay}
+            disabled={!canGoToNextDay}>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={canGoToNextDay ? UI_COLORS.neutralTextSoft : '#94A3B8'}
+            />
+          </Pressable>
+        </View>
       </View>
       <View style={styles.dateDivider} />
 
@@ -1804,130 +1862,233 @@ export default function DayTimeline() {
           <View style={styles.sheetCard}>
             <View style={styles.sheetGrabber} />
             <View style={styles.sheetHeaderRow}>
-              <Text style={styles.sheetTitle}>Metrics</Text>
+              <Text style={styles.sheetTitle}>Insights</Text>
               <Pressable
-                accessibilityLabel="Close daily metrics"
+                accessibilityLabel="Close daily insights"
                 style={styles.sheetCloseButton}
                 onPress={() => setToolsSheetVisible(false)}>
                 <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
               </Pressable>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
-              <Text style={styles.sectionTitle}>Today</Text>
-              <View style={[styles.summaryCard, styles.summaryCardPlanned]}>
-                <View style={styles.summaryCardHeader}>
-                  <Ionicons name="radio-button-on-outline" size={14} color={UI_COLORS.planned} />
-                  <Text style={styles.summaryCardLabel}>Plan</Text>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="speedometer-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                <Text style={styles.sectionTitle}>Execution Score</Text>
+                <Pressable
+                  accessibilityLabel="About execution score"
+                  style={styles.infoButton}
+                  onPress={() => showInsightsInfo('execution')}>
+                  <Ionicons name="information-circle-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                </Pressable>
+              </View>
+              <View style={styles.executionCard}>
+                <View style={styles.executionEquation}>
+                  <View style={styles.executionFraction}>
+                    <Text style={styles.executionEquationValue}>{minutesToHM(scorecardMetrics.executionDoneMinutes)}</Text>
+                    <View style={styles.executionFractionBar} />
+                    <Text style={styles.executionEquationValue}>{minutesToHM(scorecardMetrics.plannedMinutes)}</Text>
+                  </View>
+                  <Text style={styles.executionEquationOperator}>*</Text>
+                  <Text style={styles.executionEquationValue}>100%</Text>
+                  <Text style={styles.executionEquationOperator}>=</Text>
+                  <Text style={styles.executionScoreValue}>{scorecardMetrics.executionScorePercent}%</Text>
                 </View>
-                <Text style={[styles.summaryCardValue, styles.summaryCardValuePlanned]}>{minutesToHM(plannedTotalMin)}</Text>
-                <Text style={styles.summaryCardSubtext}>
-                  {plannedBlocks.length} {plannedBlocks.length === 1 ? 'block' : 'blocks'}
-                </Text>
               </View>
 
-              <View style={[styles.summaryCard, styles.summaryCardActual]}>
-                <View style={styles.summaryCardHeader}>
-                  <Ionicons name="link-outline" size={14} color={UI_COLORS.actual} />
-                  <Text style={styles.summaryCardLabel}>Done (Matched)</Text>
-                </View>
-                <Text style={[styles.summaryCardValue, styles.summaryCardValueActual]}>
-                  {minutesToHM(linkedActualTotals.linkedMinutes)}
-                </Text>
-                <Text style={styles.summaryCardSubtext}>
-                  {linkedActualTotals.linkedBlocks} matched {linkedActualTotals.linkedBlocks === 1 ? 'block' : 'blocks'}
-                </Text>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="analytics-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                <Text style={styles.sectionTitle}>Planned vs Done</Text>
+                <Pressable
+                  accessibilityLabel="About planned versus done totals"
+                  style={styles.infoButton}
+                  onPress={() => showInsightsInfo('totals')}>
+                  <Ionicons name="information-circle-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                </Pressable>
               </View>
-
-              <View style={[styles.summaryCard, styles.summaryCardFulfillment]}>
-                <View style={styles.summaryCardHeader}>
-                  <Ionicons name="trending-up-outline" size={14} color={UI_COLORS.accent} />
-                  <Text style={styles.summaryCardLabel}>Completion</Text>
+              <View style={styles.categoryBalanceList}>
+                <View style={styles.categoryBalanceCard}>
+                  <View style={styles.categoryBalanceHeader}>
+                    <Text style={styles.categoryTitle}>Total</Text>
+                    <Text style={[styles.categoryBalanceDelta, styles.overallDeltaLabel]}>
+                      {formatSignedMinutes(scorecardMetrics.doneMinutes - scorecardMetrics.plannedMinutes)}
+                    </Text>
+                  </View>
+                  <Text style={styles.barLabel}>Planned {minutesToHM(scorecardMetrics.plannedMinutes)}</Text>
+                  <View style={styles.categoryTrack}>
+                    <View
+                      style={[
+                        styles.categoryBarPlan,
+                        {
+                          width: `${Math.round(
+                            (scorecardMetrics.plannedMinutes /
+                              Math.max(scorecardMetrics.plannedMinutes, scorecardMetrics.doneMinutes, 1)) *
+                              100
+                          )}%`,
+                          backgroundColor: `${UI_COLORS.accent}66`,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.barLabel}>Done {minutesToHM(scorecardMetrics.doneMinutes)}</Text>
+                  <View style={styles.categoryTrack}>
+                    <View
+                      style={[
+                        styles.categoryBarActual,
+                        {
+                          width: `${Math.round(
+                            (scorecardMetrics.doneMinutes /
+                              Math.max(scorecardMetrics.plannedMinutes, scorecardMetrics.doneMinutes, 1)) *
+                              100
+                          )}%`,
+                          backgroundColor: UI_COLORS.accent,
+                        },
+                      ]}
+                    />
+                  </View>
                 </View>
-                <Text style={[styles.summaryCardValue, styles.summaryCardValueFulfillment]}>
-                  {overallFulfillmentPercent}%
-                </Text>
-                <Text style={styles.summaryCardSubtext}>Of plan time</Text>
-              </View>
 
-              <Text style={styles.sectionTitle}>Completion by Plan</Text>
-              {fulfillmentRows.length === 0 ? (
-                <Text style={styles.emptySheetText}>No plan blocks yet for this day.</Text>
-              ) : (
-                fulfillmentRows.map((row) => {
-                  const linkedBlocks = actualBlocks.filter((block) => block.linkedPlannedId === row.plannedId).length;
-                  const categoryTag = plannedBlocks.find((block) => block.id === row.plannedId)?.tags[0] ?? 'work';
-                  const categoryColor = categoryColorMap[categoryTag.toLowerCase()] ?? getCategoryColor(categoryTag);
-
-                  return (
-                    <View key={row.plannedId} style={styles.fulfillmentCard}>
-                      <View style={styles.fulfillmentRowTop}>
-                        <View style={styles.fulfillmentTitleWrap}>
-                          <View style={[styles.categoryDot, { backgroundColor: categoryColor }]} />
-                          <Text style={styles.fulfillmentTitle}>{row.title}</Text>
-                        </View>
-                        <Text style={styles.fulfillmentPercent}>{row.fulfillmentPercent}%</Text>
+                {categoryVarianceRows.map((row) => (
+                  <View key={row.tag} style={styles.categoryBalanceCard}>
+                    <View style={styles.categoryBalanceHeader}>
+                      <View style={styles.categoryHeader}>
+                        <View style={[styles.categoryDot, { backgroundColor: row.color }]} />
+                        <Text style={styles.categoryTitle}>{row.label}</Text>
                       </View>
-                      <View style={styles.fulfillmentRowMeta}>
-                        <Text style={styles.fulfillmentMeta}>Plan: {minutesToHM(row.plannedMinutes)}</Text>
-                        <Text style={styles.fulfillmentMeta}>
-                          Done: {minutesToHM(row.linkedActualMinutes)} ({linkedBlocks} {linkedBlocks === 1 ? 'block' : 'blocks'})
-                        </Text>
-                      </View>
-                      <View style={styles.progressTrack}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              width: `${row.fulfillmentPercent}%`,
-                              backgroundColor: categoryColor,
-                            },
-                          ]}
-                        />
-                      </View>
+                      <Text style={styles.categoryBalanceDelta}>
+                        {row.deltaMinutes === 0
+                          ? 'Aligned'
+                          : `${row.deltaMinutes > 0 ? 'Over' : 'Under'} ${minutesToHM(Math.abs(row.deltaMinutes))}`}
+                      </Text>
                     </View>
-                  );
-                })
-              )}
-
-              <Text style={styles.sectionTitle}>Time by Category</Text>
-              {categoryRows.length === 0 ? (
-                <Text style={styles.emptySheetText}>No categories yet for this day.</Text>
-              ) : (
-                categoryRows.map((row) => (
-                  <View key={row.tag} style={styles.categoryCard}>
-                    <View style={styles.categoryHeader}>
-                      <View style={[styles.categoryDot, { backgroundColor: row.color }]} />
-                      <Text style={styles.categoryTitle}>{row.label}</Text>
-                    </View>
-
-                    <View style={styles.categoryLine}>
-                      <Text style={styles.categoryLineLabel}>Plan</Text>
-                      <Text style={styles.categoryLineValue}>{minutesToHM(row.plannedMinutes)}</Text>
-                    </View>
+                    <Text style={styles.barLabel}>Planned {minutesToHM(row.plannedMinutes)}</Text>
                     <View style={styles.categoryTrack}>
                       <View
                         style={[
                           styles.categoryBarPlan,
-                          { width: `${Math.round(row.plannedRatio * 100)}%`, backgroundColor: `${row.color}66` },
+                          {
+                            width: `${maxCategoryMinutes > 0 ? Math.round((row.plannedMinutes / maxCategoryMinutes) * 100) : 0}%`,
+                            backgroundColor: `${row.color}66`,
+                          },
                         ]}
                       />
                     </View>
-
-                    <View style={styles.categoryLine}>
-                      <Text style={styles.categoryLineLabel}>Done</Text>
-                      <Text style={styles.categoryLineValue}>{minutesToHM(row.actualMinutes)}</Text>
-                    </View>
+                    <Text style={styles.barLabel}>Done {minutesToHM(row.doneMinutes)}</Text>
                     <View style={styles.categoryTrack}>
                       <View
                         style={[
                           styles.categoryBarActual,
-                          { width: `${Math.round(row.actualRatio * 100)}%`, backgroundColor: row.color },
+                          {
+                            width: `${maxCategoryMinutes > 0 ? Math.round((row.doneMinutes / maxCategoryMinutes) * 100) : 0}%`,
+                            backgroundColor: row.color,
+                          },
                         ]}
                       />
                     </View>
                   </View>
-                ))
-              )}
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={actionsMenuVisible}
+        onRequestClose={() => setActionsMenuVisible(false)}>
+        <View style={styles.menuModalRoot}>
+          <Pressable
+            style={styles.menuBackdrop}
+            accessibilityLabel="Close timeline actions"
+            accessibilityRole="button"
+            onPress={() => setActionsMenuVisible(false)}
+          />
+          <View style={styles.menuCard}>
+            <View style={styles.sheetHeaderRow}>
+              <Text style={styles.sheetTitle}>Timeline Actions</Text>
+              <Pressable
+                accessibilityLabel="Close timeline actions"
+                style={styles.sheetCloseButton}
+                onPress={() => setActionsMenuVisible(false)}>
+                <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+              <Text style={styles.sectionTitle}>Actions</Text>
+              <View style={styles.actionGrid}>
+                <Pressable accessibilityLabel="Share day summary" style={styles.actionButton} onPress={shareDaySummary}>
+                  <Text style={styles.actionButtonText}>Share Summary</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Copy plan blocks into done lane"
+                  style={styles.actionButton}
+                  onPress={copyPlannedToActual}>
+                  <Text style={styles.actionButtonText}>Copy Plan to Done</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Copy yesterday plan blocks to today"
+                  style={[styles.actionButton, !isViewingToday && styles.actionButtonDisabled]}
+                  onPress={copyYesterdayPlannedToToday}
+                  disabled={!isViewingToday}>
+                  <Text style={[styles.actionButtonText, !isViewingToday && styles.actionButtonTextDisabled]}>
+                    Copy Yesterday Plan
+                  </Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.sectionTitle}>Quick Add</Text>
+              <Pressable
+                accessibilityLabel="Toggle quick add presets"
+                style={styles.expanderButton}
+                onPress={() => setQuickAddExpanded((current) => !current)}>
+                <Text style={styles.expanderButtonText}>
+                  {quickAddExpanded ? 'Hide presets' : 'Show presets'}
+                </Text>
+                <Ionicons
+                  name={quickAddExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={UI_COLORS.neutralTextSoft}
+                />
+              </Pressable>
+              {quickAddExpanded ? (
+                <View style={styles.quickPresetList}>
+                  {QUICK_PRESETS.map((preset) => (
+                    <Pressable
+                      key={preset.key}
+                      accessibilityLabel={`Quick add ${preset.title}`}
+                      style={styles.quickPresetButton}
+                      onPress={() => handleQuickAdd(preset)}>
+                      <View>
+                        <Text style={styles.quickPresetTitle}>{preset.title}</Text>
+                        <Text style={styles.quickPresetMeta}>
+                          {preset.lane === 'planned' ? 'Plan' : 'Done'} • {minutesToHM(preset.durationMin)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              <Text style={styles.sectionTitle}>Filter</Text>
+              <View style={styles.filterRow}>
+                {tagFilterOptions.map((option) => {
+                  const selected = tagFilter === option;
+                  const label = option === 'all' ? 'All' : getCategoryLabel(option);
+
+                  return (
+                    <Pressable
+                      key={option}
+                      accessibilityLabel={`Filter blocks by ${label}`}
+                      style={[styles.filterChip, selected && styles.filterChipSelected]}
+                      onPress={() => setTagFilter(option)}>
+                      <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </ScrollView>
           </View>
         </View>
@@ -1998,6 +2159,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  dateRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  todayJumpButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: UI_COLORS.glassStroke,
+    backgroundColor: UI_COLORS.glassSurface,
+    paddingHorizontal: 10,
+    minHeight: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todayJumpButtonText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 12,
+    fontWeight: '600',
   },
   dateLabel: {
     color: UI_COLORS.neutralText,
@@ -2241,12 +2422,21 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  menuModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: UI_COLORS.overlay,
+  },
   sheetBackdrop: {
     flex: 1,
     backgroundColor: UI_COLORS.overlay,
   },
   sheetCard: {
-    maxHeight: '86%',
+    height: SHEET_VISIBLE_HEIGHT,
     backgroundColor: UI_COLORS.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
     borderTopRightRadius: UI_RADIUS.sheet,
@@ -2291,6 +2481,19 @@ const styles = StyleSheet.create({
   sheetContent: {
     gap: 8,
     paddingBottom: 10,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  infoButton: {
+    marginLeft: 'auto',
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   summaryCard: {
     borderRadius: 0,
@@ -2346,7 +2549,196 @@ const styles = StyleSheet.create({
     color: UI_COLORS.neutralText,
     fontSize: 13,
     fontWeight: '700',
-    marginTop: 8,
+  },
+  executionCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    backgroundColor: '#E0F2FE',
+    minHeight: 84,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  executionEquation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'nowrap',
+    columnGap: 8,
+  },
+  executionFraction: {
+    minWidth: 84,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  executionFractionBar: {
+    width: '100%',
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#0369A1',
+  },
+  executionEquationValue: {
+    color: '#0C4A6E',
+    fontSize: 17,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  executionEquationOperator: {
+    color: '#0369A1',
+    fontSize: 16,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  executionScoreValue: {
+    color: '#0C4A6E',
+    fontSize: 30,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  categoryBalanceList: {
+    gap: 8,
+  },
+  categoryBalanceCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: UI_COLORS.glassStroke,
+    backgroundColor: UI_COLORS.glassSurface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  categoryBalanceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  barLabel: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  categoryBalanceDelta: {
+    color: UI_COLORS.neutralText,
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  overallDeltaLabel: {
+    alignSelf: 'flex-end',
+  },
+  actionGrid: {
+    gap: 8,
+  },
+  actionButton: {
+    minHeight: 40,
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonDisabled: {
+    backgroundColor: UI_COLORS.surfaceMuted,
+    opacity: 0.7,
+  },
+  actionButtonText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  actionButtonTextDisabled: {
+    color: UI_COLORS.neutralTextSoft,
+  },
+  expanderButton: {
+    minHeight: 40,
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  expanderButtonText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  quickPresetList: {
+    gap: 8,
+  },
+  quickPresetButton: {
+    minHeight: 44,
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+  },
+  quickPresetTitle: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  quickPresetMeta: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  filterChipSelected: {
+    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: UI_COLORS.neutralText,
+  },
+  filterChipText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterChipTextSelected: {
+    color: UI_COLORS.neutralText,
+  },
+  tagBreakdownList: {
+    gap: 8,
+  },
+  tagBreakdownRow: {
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  tagBreakdownTag: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tagBreakdownMeta: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '500',
   },
   emptySheetText: {
     color: UI_COLORS.neutralTextSoft,
@@ -2491,11 +2883,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   menuCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    marginHorizontal: 24,
+    backgroundColor: UI_COLORS.surface,
+    borderRadius: UI_RADIUS.card,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    maxHeight: '70%',
   },
   menuItem: {
     paddingHorizontal: 12,
