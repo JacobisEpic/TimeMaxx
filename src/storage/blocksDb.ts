@@ -48,6 +48,7 @@ function generateUuidV4(): string {
 }
 
 type BlockRow = {
+  dayKey: string;
   id: string;
   lane: string;
   startMin: number;
@@ -127,7 +128,7 @@ export async function getBlocksForDay(dayKey: string): Promise<Block[]> {
   await initDb();
   const db = await getDb();
   const rows = await db.getAllAsync<BlockRow>(
-    `SELECT id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
      FROM blocks
      WHERE dayKey = ?
      ORDER BY lane ASC, startMin ASC, id ASC;`,
@@ -137,6 +138,37 @@ export async function getBlocksForDay(dayKey: string): Promise<Block[]> {
   return rows
     .map((row) => mapRowToBlock(row))
     .filter((block): block is Block => block !== null);
+}
+
+export async function getBlocksForDayRange(dayKeyStart: string, dayKeyEnd: string): Promise<Record<string, Block[]>> {
+  await initDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<BlockRow>(
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+     FROM blocks
+     WHERE dayKey >= ? AND dayKey <= ?
+     ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`,
+    dayKeyStart,
+    dayKeyEnd
+  );
+
+  const blocksByDay: Record<string, Block[]> = {};
+
+  for (const row of rows) {
+    const block = mapRowToBlock(row);
+
+    if (!block) {
+      continue;
+    }
+
+    if (!blocksByDay[row.dayKey]) {
+      blocksByDay[row.dayKey] = [];
+    }
+
+    blocksByDay[row.dayKey].push(block);
+  }
+
+  return blocksByDay;
 }
 
 export async function insertBlock(

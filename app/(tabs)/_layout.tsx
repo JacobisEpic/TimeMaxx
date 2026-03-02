@@ -8,6 +8,7 @@ export default function TabLayout() {
     <AppSettingsProvider>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="month" options={{ headerShown: false }} />
         <Stack.Screen
           name="settings"
           options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_bottom' }}

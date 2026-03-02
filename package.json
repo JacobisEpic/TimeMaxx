@@ -8,6 +8,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "test": "node -r sucrase/register --test test",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "prebuild:check": "expo config --type prebuild >/dev/null",
