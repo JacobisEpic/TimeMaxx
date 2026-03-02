@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
@@ -103,6 +104,7 @@ export function BlockEditorModal({
   onSave,
   onDelete,
 }: BlockEditorModalProps) {
+  const insets = useSafeAreaInsets();
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [wheelHour, setWheelHour] = useState(8);
@@ -210,7 +212,15 @@ export function BlockEditorModal({
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.backdrop}>
         <Pressable style={styles.dismissLayer} onPress={onCancel} />
-        <View style={styles.card}>
+        <View
+          style={[
+            styles.card,
+            {
+              paddingBottom: 18 + insets.bottom,
+              paddingLeft: 16 + insets.left,
+              paddingRight: 16 + insets.right,
+            },
+          ]}>
           <View style={styles.grabber} />
           <View style={styles.headerRow}>
             <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>

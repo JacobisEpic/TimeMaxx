@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  FlatList,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Modal,
@@ -9,11 +10,13 @@ import {
   Share,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import { Block, PIXELS_PER_MINUTE } from '@/src/components/Block';
@@ -21,7 +24,7 @@ import { BlockEditorModal } from '@/src/components/BlockEditorModal';
 import { TAG_CATALOG } from '@/src/constants/tags';
 import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryColor, getCategoryLabel } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
-import { deleteBlock, getBlocksForDay, insertBlock, updateBlock } from '@/src/storage/blocksDb';
+import { deleteBlock, getBlocksForDay, getBlocksForDayRange, insertBlock, updateBlock } from '@/src/storage/blocksDb';
 import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
 import { clamp, formatDuration, formatHHMM, parseHHMM, roundTo15 } from '@/src/utils/time';
@@ -81,6 +84,22 @@ type DraftCandidate = {
   startedAtMs: number;
 };
 
+type CalendarCell = {
+  key: string;
+  dayKey: string | null;
+  date: Date | null;
+  inCurrentMonth: boolean;
+};
+
+type CalendarMonth = {
+  key: string;
+  label: string;
+  monthStart: Date;
+  rowCount: number;
+  height: number;
+  cells: CalendarCell[];
+};
+
 const MINUTES_PER_DAY = 24 * 60;
 const TIMELINE_HEIGHT = MINUTES_PER_DAY * PIXELS_PER_MINUTE;
 const TIME_GUTTER_WIDTH = 54;
@@ -94,6 +113,12 @@ const CREATE_DELAY_MS = 260;
 const TAP_CREATE_MIN_HOLD_MS = 500;
 const TAP_CREATE_DURATION_MIN = 60;
 const SCROLL_LIKE_VELOCITY_Y = 900;
+const CALENDAR_WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const CALENDAR_MONTH_SPAN = 12;
+const CALENDAR_CELL_HEIGHT = 52;
+const CALENDAR_MONTH_LABEL_HEIGHT = 38;
+const CALENDAR_WEEKDAY_ROW_HEIGHT = 22;
+const CALENDAR_MONTH_BOTTOM_SPACE = 16;
 
 const QUICK_PRESETS: QuickPreset[] = [
   { key: 'focus-60', title: 'Focus', durationMin: 60, lane: 'planned', tags: ['focus'] },
@@ -138,6 +163,70 @@ function getNextQuarterMinuteFromNow(): number {
   const minute = now.getHours() * 60 + now.getMinutes();
   const nextQuarter = Math.ceil(minute / 15) * 15;
   return clamp(nextQuarter, 0, MINUTES_PER_DAY - 15);
+}
+
+function parseDayKeyParam(input: string | string[] | undefined): string | null {
+  const raw = Array.isArray(input) ? input[0] : input;
+
+  if (!raw) {
+    return null;
+  }
+
+  return dayKeyToLocalDate(raw) ? raw : null;
+}
+
+function getMonthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getDaysInMonth(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function getCalendarMonthHeight(rowCount: number): number {
+  return CALENDAR_MONTH_LABEL_HEIGHT + CALENDAR_WEEKDAY_ROW_HEIGHT + rowCount * CALENDAR_CELL_HEIGHT + CALENDAR_MONTH_BOTTOM_SPACE;
+}
+
+function buildMonthCells(monthStart: Date): { cells: CalendarCell[]; rowCount: number; height: number } {
+  const start = getMonthStart(monthStart);
+  const firstWeekday = start.getDay();
+  const dayCount = getDaysInMonth(start);
+  const rowCount = Math.ceil((firstWeekday + dayCount) / 7);
+  const totalCells = rowCount * 7;
+  const cells: CalendarCell[] = [];
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayOfMonth = i - firstWeekday + 1;
+    const isInMonth = dayOfMonth >= 1 && dayOfMonth <= dayCount;
+    const date = isInMonth ? new Date(start.getFullYear(), start.getMonth(), dayOfMonth) : null;
+    cells.push({
+      key: `${start.getFullYear()}-${start.getMonth() + 1}-${i}`,
+      dayKey: date ? getLocalDayKey(date) : null,
+      date,
+      inCurrentMonth: isInMonth,
+    });
+  }
+
+  return { cells, rowCount, height: getCalendarMonthHeight(rowCount) };
+}
+
+function buildCalendarMonths(anchorDate: Date): CalendarMonth[] {
+  const months: CalendarMonth[] = [];
+
+  for (let offset = -CALENDAR_MONTH_SPAN; offset <= CALENDAR_MONTH_SPAN; offset += 1) {
+    const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + offset, 1);
+    const monthCells = buildMonthCells(monthStart);
+    months.push({
+      key: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`,
+      label: new Intl.DateTimeFormat(undefined, { month: 'long' }).format(monthStart),
+      monthStart,
+      rowCount: monthCells.rowCount,
+      height: monthCells.height,
+      cells: monthCells.cells,
+    });
+  }
+
+  return months;
 }
 
 function formatCurrentTimeLabel(min: number): string {
@@ -341,10 +430,14 @@ async function triggerSuccessHaptic(): Promise<void> {
 }
 
 export default function DayTimeline() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { dayKey: dayKeyParam } = useLocalSearchParams<{ dayKey?: string | string[] }>();
+  const routeDayKey = useMemo(() => parseDayKeyParam(dayKeyParam), [dayKeyParam]);
   const { settings, loading: settingsLoading, dataVersion } = useAppSettings();
+  const { height: windowHeight } = useWindowDimensions();
 
-  const [dayKey, setDayKey] = useState(getLocalDayKey());
+  const [dayKey, setDayKey] = useState(() => routeDayKey ?? getLocalDayKey());
   const [dataReloadTick, setDataReloadTick] = useState(0);
   const [clockMinute, setClockMinute] = useState(() => {
     const now = new Date();
@@ -363,6 +456,9 @@ export default function DayTimeline() {
   const [tagFilter, setTagFilter] = useState<TagFilter>('all');
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
   const [actionsMenuVisible, setActionsMenuVisible] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [calendarScoreByDay, setCalendarScoreByDay] = useState<Record<string, number | null>>({});
+  const [calendarVisibleYear, setCalendarVisibleYear] = useState(() => new Date().getFullYear());
   const [focusedPlannedId, setFocusedPlannedId] = useState<string | null>(null);
   const [quickAddExpanded, setQuickAddExpanded] = useState(false);
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
@@ -376,6 +472,8 @@ export default function DayTimeline() {
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadRequestIdRef = useRef(0);
   const timelineScrollRef = useRef<ScrollView | null>(null);
+  const calendarListRef = useRef<FlatList<CalendarMonth> | null>(null);
+  const calendarInitialPositionedRef = useRef(false);
   const timelineViewportTopRef = useRef(0);
   const timelineScrollOffsetYRef = useRef(0);
   const autoScrolledDayKeyRef = useRef<string | null>(null);
@@ -383,6 +481,36 @@ export default function DayTimeline() {
   const todayDayKey = getLocalDayKey();
   const canGoToNextDay = dayKey < todayDayKey;
   const isViewingToday = dayKey === todayDayKey;
+  const selectedDate = useMemo(() => dayKeyToLocalDate(dayKey) ?? new Date(), [dayKey]);
+  const calendarMonths = useMemo(() => buildCalendarMonths(selectedDate), [selectedDate]);
+  const selectedMonthIndex = CALENDAR_MONTH_SPAN;
+  const calendarMonthOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let running = 0;
+    for (const month of calendarMonths) {
+      offsets.push(running);
+      running += month.height;
+    }
+    return offsets;
+  }, [calendarMonths]);
+  const centeredMonthOffset = useMemo(() => {
+    const estimatedCalendarViewportHeight = Math.max(0, windowHeight - 124);
+    const selectedMonthTop = calendarMonthOffsets[selectedMonthIndex] ?? 0;
+    const selectedMonthHeight = calendarMonths[selectedMonthIndex]?.height ?? 0;
+    const centeredOffset =
+      selectedMonthTop -
+      (estimatedCalendarViewportHeight - selectedMonthHeight) / 2;
+    return Math.max(0, Math.round(centeredOffset));
+  }, [calendarMonthOffsets, calendarMonths, selectedMonthIndex, windowHeight]);
+  const calendarViewabilityConfig = useRef({ itemVisiblePercentThreshold: 45 });
+  const onViewableMonthsChanged = useRef(
+    ({ viewableItems }: { viewableItems: { item: CalendarMonth }[] }) => {
+      const firstVisible = viewableItems[0]?.item;
+      if (firstVisible) {
+        setCalendarVisibleYear(firstVisible.monthStart.getFullYear());
+      }
+    }
+  );
 
   const visibleDateLabel = useMemo(() => {
     const date = dayKeyToLocalDate(dayKey);
@@ -546,9 +674,86 @@ export default function DayTimeline() {
     [categoryVarianceRows]
   );
 
+  useEffect(() => {
+    if (!calendarVisible || calendarMonths.length === 0) {
+      return;
+    }
+
+    const firstMonthCells = calendarMonths[0].cells;
+    const lastMonthCells = calendarMonths[calendarMonths.length - 1].cells;
+    const startDayKey = firstMonthCells.find((cell) => cell.inCurrentMonth)?.dayKey;
+    const endDayKey = [...lastMonthCells].reverse().find((cell) => cell.inCurrentMonth)?.dayKey;
+
+    if (!startDayKey || !endDayKey) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCalendarScores = async () => {
+      try {
+        const blocksByDay = await getBlocksForDayRange(startDayKey, endDayKey);
+
+        if (cancelled) {
+          return;
+        }
+
+        const nextScores: Record<string, number | null> = {};
+        for (const month of calendarMonths) {
+          for (const cell of month.cells) {
+            if (!cell.inCurrentMonth || !cell.dayKey) {
+              continue;
+            }
+
+            const dayBlocks = blocksByDay[cell.dayKey] ?? [];
+            let plannedMinutes = 0;
+            let doneMinutes = 0;
+
+            for (const block of dayBlocks) {
+              if (isExcludedFromMetrics(block)) {
+                continue;
+              }
+
+              const duration = Math.max(0, block.endMin - block.startMin);
+              if (block.lane === 'planned') {
+                plannedMinutes += duration;
+              } else {
+                doneMinutes += duration;
+              }
+            }
+
+            nextScores[cell.dayKey] = plannedMinutes > 0 ? Math.min(100, Math.round((doneMinutes / plannedMinutes) * 100)) : null;
+          }
+        }
+
+        setCalendarScoreByDay(nextScores);
+      } catch {
+        if (!cancelled) {
+          setCalendarScoreByDay({});
+        }
+      }
+    };
+
+    void loadCalendarScores();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [calendarMonths, calendarVisible, dataVersion]);
+
   const reloadCurrentDay = useCallback(() => {
     setDataReloadTick((current) => current + 1);
   }, []);
+
+  const closeCalendar = useCallback(() => {
+    setCalendarVisible(false);
+  }, []);
+
+  const openCalendar = useCallback(() => {
+    setCalendarVisibleYear(selectedDate.getFullYear());
+    calendarInitialPositionedRef.current = false;
+    setCalendarVisible(true);
+  }, [selectedDate]);
 
   const syncTimelineViewportTop = useCallback(() => {
     const measurable = timelineScrollRef.current as unknown as
@@ -582,6 +787,14 @@ export default function DayTimeline() {
     setDayKey(getLocalDayKey());
     setDataReloadTick((current) => current + 1);
   }, [dataVersion]);
+
+  useEffect(() => {
+    if (!routeDayKey) {
+      return;
+    }
+
+    setDayKey(routeDayKey);
+  }, [routeDayKey]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -1531,8 +1744,133 @@ export default function DayTimeline() {
     setSelectedLane('actual');
   }, []);
 
+  const handleSelectCalendarDay = useCallback(
+    (nextDayKey: string) => {
+      setDayKey(nextDayKey);
+      closeCalendar();
+    },
+    [closeCalendar]
+  );
+
+  if (calendarVisible) {
+    return (
+      <View
+        style={[
+          styles.screen,
+          {
+            paddingTop: insets.top,
+            paddingLeft: 12 + insets.left,
+            paddingRight: 12 + insets.right,
+            paddingBottom: insets.bottom,
+          },
+        ]}>
+        <View style={styles.calendarScreenTopBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to day view"
+            style={styles.calendarTopButton}
+            onPress={closeCalendar}>
+            <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+            <Text style={styles.calendarTopButtonText}>{calendarVisibleYear}</Text>
+          </Pressable>
+          <View style={styles.calendarTopCenterSpacer} />
+          <View style={styles.calendarTopRightSpacer} />
+        </View>
+
+        <FlatList
+          ref={calendarListRef}
+          data={calendarMonths}
+          keyExtractor={(item) => item.key}
+          onLayout={() => {
+            if (calendarInitialPositionedRef.current) {
+              return;
+            }
+
+            calendarInitialPositionedRef.current = true;
+            requestAnimationFrame(() => {
+              calendarListRef.current?.scrollToOffset({ offset: centeredMonthOffset, animated: false });
+            });
+          }}
+          getItemLayout={(_data, index) => ({
+            index,
+            length: calendarMonths[index]?.height ?? 0,
+            offset: calendarMonthOffsets[index] ?? 0,
+          })}
+          onScrollToIndexFailed={() => {
+            // Ignore occasional first-render measurement misses.
+          }}
+          viewabilityConfig={calendarViewabilityConfig.current}
+          onViewableItemsChanged={onViewableMonthsChanged.current}
+          showsVerticalScrollIndicator={false}
+          scrollsToTop={false}
+          contentContainerStyle={styles.calendarListContent}
+          renderItem={({ item }) => (
+            <View style={[styles.calendarMonthSection, { height: item.height }]}>
+              <Text style={styles.calendarMonthLabel}>{item.label}</Text>
+              <View style={styles.calendarWeekdayRow}>
+                {CALENDAR_WEEKDAY_LABELS.map((label, labelIndex) => (
+                  <Text key={`${item.key}-${labelIndex}`} style={styles.calendarWeekdayLabel}>
+                    {label}
+                  </Text>
+                ))}
+              </View>
+              <View style={styles.calendarGrid}>
+                {item.cells.map((cell) => {
+                  if (!cell.inCurrentMonth) {
+                    return <View key={`${item.key}-${cell.key}`} style={styles.calendarCellPlaceholder} />;
+                  }
+
+                  const cellDayKey = cell.dayKey;
+                  const isToday = cellDayKey === todayDayKey;
+                  const score = cellDayKey ? calendarScoreByDay[cellDayKey] : null;
+
+                  return (
+                    <Pressable
+                      key={`${item.key}-${cell.key}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={cellDayKey ? `Open ${cellDayKey}` : 'Open date'}
+                      style={styles.calendarCell}
+                      onPress={() => {
+                        if (cellDayKey) {
+                          handleSelectCalendarDay(cellDayKey);
+                        }
+                      }}>
+                      <View
+                        style={[
+                          styles.calendarDayBadge,
+                          isToday && styles.calendarDayBadgeSelected,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.calendarDayNumber,
+                            isToday && styles.calendarDayNumberSelected,
+                          ]}>
+                          {cell.date?.getDate() ?? ''}
+                        </Text>
+                      </View>
+                      <Text style={styles.calendarScoreText}>{score != null ? `${score}%` : ' '}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        />
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.screen}>
+    <View
+      style={[
+        styles.screen,
+        {
+          paddingTop: insets.top,
+          paddingLeft: 12 + insets.left,
+          paddingRight: 12 + insets.right,
+          paddingBottom: insets.bottom,
+        },
+      ]}>
       <View style={styles.topHeaderRow}>
         <Text style={styles.appTitle}>Plan vs Done</Text>
         <View style={styles.topActions}>
@@ -1549,6 +1887,13 @@ export default function DayTimeline() {
             style={styles.analyticsButton}
             onPress={() => setActionsMenuVisible(true)}>
             <Ionicons name="ellipsis-horizontal" size={18} color={UI_COLORS.neutralText} />
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Open month view"
+            accessibilityRole="button"
+            style={styles.analyticsButton}
+            onPress={openCalendar}>
+            <Ionicons name="calendar-outline" size={18} color={UI_COLORS.neutralText} />
           </Pressable>
           <Pressable
             accessibilityLabel="Open settings"
@@ -1568,27 +1913,18 @@ export default function DayTimeline() {
       </View>
 
       <View style={styles.dateRow}>
-        <Pressable
-          accessibilityLabel="Go to previous day"
-          accessibilityRole="button"
-          style={styles.dateNavButton}
-          onPress={goToPreviousDay}>
-          <Ionicons name="chevron-back" size={18} color={UI_COLORS.neutralTextSoft} />
-        </Pressable>
-        <View style={styles.dateLabelWrap}>
-          <Ionicons name="calendar-outline" size={15} color={UI_COLORS.neutralTextSoft} />
-          <Text style={styles.dateLabel}>{dateRowLabel}</Text>
-        </View>
-        <View style={styles.dateRightGroup}>
-          {!isViewingToday ? (
-            <Pressable
-              accessibilityLabel="Jump to today"
-              accessibilityRole="button"
-              style={styles.todayJumpButton}
-              onPress={goToToday}>
-              <Text style={styles.todayJumpButtonText}>Today</Text>
-            </Pressable>
-          ) : null}
+        <View style={styles.dateCenterNav}>
+          <Pressable
+            accessibilityLabel="Go to previous day"
+            accessibilityRole="button"
+            style={styles.dateNavButton}
+            onPress={goToPreviousDay}>
+            <Ionicons name="chevron-back" size={18} color={UI_COLORS.neutralTextSoft} />
+          </Pressable>
+          <View style={styles.dateLabelWrap}>
+            <Ionicons name="calendar-outline" size={15} color={UI_COLORS.neutralTextSoft} />
+            <Text style={styles.dateLabel}>{dateRowLabel}</Text>
+          </View>
           <Pressable
             accessibilityLabel="Go to next day"
             accessibilityRole="button"
@@ -1603,69 +1939,81 @@ export default function DayTimeline() {
           </Pressable>
         </View>
       </View>
-      <View style={styles.dateDivider} />
-
-      <View style={styles.topControlRow}>
-        <View style={styles.segmentedControl}>
-          {(['compare', 'planned', 'actual'] as ViewMode[]).map((mode) => {
-            const selected = viewMode === mode;
-
-            return (
-              <Pressable
-                key={mode}
-                accessibilityLabel={`Set ${mode} view`}
-                accessibilityRole="button"
-                onPress={() => setViewMode(mode)}
-                style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
-                <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
-                  {mode === 'compare' ? 'Compare' : mode === 'planned' ? 'Plan' : 'Done'}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      {!hasAnyBlocks ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateTitle}>No blocks for this day.</Text>
-          <Text style={styles.emptyStateBody}>Tap empty time to create your first event.</Text>
+      {!isViewingToday ? (
+        <View style={styles.todayJumpRow}>
           <Pressable
-            accessibilityLabel="Add first block"
+            accessibilityLabel="Go to today"
             accessibilityRole="button"
-            style={styles.emptyStateButton}
-            onPress={() => openCreateEditor(selectedLane)}>
-            <Text style={styles.emptyStateButtonText}>Add first block</Text>
+            style={styles.todayJumpButton}
+            onPress={goToToday}>
+            <Text style={styles.todayJumpButtonText}>Go to Today</Text>
           </Pressable>
         </View>
       ) : null}
+      <View style={styles.dateDivider} />
 
-      <View style={styles.headerRow}>
-        <View style={styles.timeHeader} />
-        <View style={styles.laneHeaderContainer}>
-          {compareMode ? (
-            <View style={styles.compareHeaderRow}>
-              <Text style={styles.compareHeaderLabel}>Plan</Text>
-              <View style={styles.compareHeaderDivider} />
-              <Text style={styles.compareHeaderLabel}>Done</Text>
+      <View style={styles.dayContent}>
+          <View style={styles.topControlRow}>
+            <View style={styles.segmentedControl}>
+              {(['compare', 'planned', 'actual'] as ViewMode[]).map((mode) => {
+                const selected = viewMode === mode;
+
+                return (
+                  <Pressable
+                    key={mode}
+                    accessibilityLabel={`Set ${mode} view`}
+                    accessibilityRole="button"
+                    onPress={() => setViewMode(mode)}
+                    style={[styles.segmentButton, selected && styles.segmentButtonSelected]}>
+                    <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>
+                      {mode === 'compare' ? 'Compare' : mode === 'planned' ? 'Plan' : 'Done'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
-          ) : (
-            <Text style={styles.laneHeader}>{laneVisibility.planned ? 'Plan' : 'Done'}</Text>
-          )}
-        </View>
-      </View>
+          </View>
 
-      <ScrollView
-        ref={timelineScrollRef}
-        scrollEnabled={activeDragId === null && !isCreatingDraft}
-        style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { height: TIMELINE_HEIGHT }]}
-        onLayout={syncTimelineViewportTop}
-        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
-          timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
-        }}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator>
+          {!hasAnyBlocks ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateTitle}>No blocks for this day.</Text>
+              <Text style={styles.emptyStateBody}>Tap empty time to create your first event.</Text>
+              <Pressable
+                accessibilityLabel="Add first block"
+                accessibilityRole="button"
+                style={styles.emptyStateButton}
+                onPress={() => openCreateEditor(selectedLane)}>
+                <Text style={styles.emptyStateButtonText}>Add first block</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.headerRow}>
+            <View style={styles.timeHeader} />
+            <View style={styles.laneHeaderContainer}>
+              {compareMode ? (
+                <View style={styles.compareHeaderRow}>
+                  <Text style={styles.compareHeaderLabel}>Plan</Text>
+                  <View style={styles.compareHeaderDivider} />
+                  <Text style={styles.compareHeaderLabel}>Done</Text>
+                </View>
+              ) : (
+                <Text style={styles.laneHeader}>{laneVisibility.planned ? 'Plan' : 'Done'}</Text>
+              )}
+            </View>
+          </View>
+
+          <ScrollView
+            ref={timelineScrollRef}
+            scrollEnabled={activeDragId === null && !isCreatingDraft}
+            style={styles.scrollView}
+            contentContainerStyle={[styles.scrollContent, { height: TIMELINE_HEIGHT }]}
+            onLayout={syncTimelineViewportTop}
+            onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+              timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+            }}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator>
         <View style={[styles.timelineBody, { height: TIMELINE_HEIGHT }]}>
           <View style={styles.timeColumn}>
             {Array.from({ length: 24 }, (_, hour) => {
@@ -1817,7 +2165,8 @@ export default function DayTimeline() {
             </>
           ) : null}
         </View>
-      </ScrollView>
+          </ScrollView>
+        </View>
 
       <Text style={styles.feedbackText}>{feedbackMessage ?? ' '}</Text>
 
@@ -1859,7 +2208,15 @@ export default function DayTimeline() {
             accessibilityRole="button"
             onPress={() => setToolsSheetVisible(false)}
           />
-          <View style={styles.sheetCard}>
+          <View
+            style={[
+              styles.sheetCard,
+              {
+                paddingBottom: 18 + insets.bottom,
+                paddingLeft: 16 + insets.left,
+                paddingRight: 16 + insets.right,
+              },
+            ]}>
             <View style={styles.sheetGrabber} />
             <View style={styles.sheetHeaderRow}>
               <Text style={styles.sheetTitle}>Insights</Text>
@@ -2107,9 +2464,6 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: UI_COLORS.appBackground,
-    paddingTop: 42,
-    paddingHorizontal: 12,
-    paddingBottom: 0,
   },
   topHeaderRow: {
     flexDirection: 'row',
@@ -2142,8 +2496,13 @@ const styles = StyleSheet.create({
   dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     marginBottom: 6,
+  },
+  dateCenterNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   dateNavButton: {
     width: 34,
@@ -2160,10 +2519,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  dateRightGroup: {
-    flexDirection: 'row',
+  todayJumpRow: {
     alignItems: 'center',
-    gap: 8,
+    marginBottom: 4,
   },
   todayJumpButton: {
     borderRadius: 10,
@@ -2195,6 +2553,9 @@ const styles = StyleSheet.create({
   },
   topControlRow: {
     marginBottom: 6,
+  },
+  dayContent: {
+    flex: 1,
   },
   segmentedControl: {
     flexDirection: 'row',
@@ -2417,6 +2778,151 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 11,
     fontWeight: '600',
+  },
+  calendarScreenTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 8,
+  },
+  calendarModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 28,
+  },
+  calendarBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  calendarSheet: {
+    flex: 1,
+    backgroundColor: '#F2F2F5',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingTop: 10,
+    overflow: 'hidden',
+  },
+  calendarTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  calendarTopTitle: {
+    color: '#111827',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  calendarTopCenterSpacer: {
+    flex: 1,
+  },
+  calendarTopRightSpacer: {
+    minWidth: 88,
+    height: 38,
+  },
+  calendarTopButton: {
+    minWidth: 88,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    gap: 7,
+  },
+  calendarTopButtonText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  calendarListContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  calendarMonthSection: {
+    marginBottom: 0,
+    paddingBottom: CALENDAR_MONTH_BOTTOM_SPACE,
+  },
+  calendarMonthLabel: {
+    color: '#111827',
+    fontSize: 30,
+    lineHeight: CALENDAR_MONTH_LABEL_HEIGHT,
+    fontWeight: '600',
+    marginBottom: 0,
+    paddingHorizontal: 8,
+  },
+  calendarWeekdayRow: {
+    flexDirection: 'row',
+    height: CALENDAR_WEEKDAY_ROW_HEIGHT,
+    marginBottom: 0,
+    paddingHorizontal: 2,
+    alignItems: 'center',
+  },
+  calendarWeekdayLabel: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarCell: {
+    width: '14.2857%',
+    height: CALENDAR_CELL_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 2,
+  },
+  calendarCellPlaceholder: {
+    width: '14.2857%',
+    height: CALENDAR_CELL_HEIGHT,
+  },
+  calendarDayBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayBadgeSelected: {
+    backgroundColor: '#FF3B30',
+  },
+  calendarDayBadgeToday: {
+    borderWidth: 1.5,
+    borderColor: '#FF3B30',
+  },
+  calendarDayNumber: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  calendarDayNumberMuted: {
+    color: '#9CA3AF',
+  },
+  calendarDayNumberSelected: {
+    color: '#FFFFFF',
+  },
+  calendarScoreText: {
+    color: '#2563EB',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  calendarScoreTextMuted: {
+    color: '#9CA3AF',
   },
   sheetModalRoot: {
     flex: 1,
