@@ -49,6 +49,7 @@ type BlockEditorModalProps = {
   onCancel: () => void;
   onSave: () => void;
   onDelete: () => void;
+  onCopyToDone?: () => void;
 };
 
 const CATEGORY_OPTIONS = [
@@ -103,6 +104,7 @@ export function BlockEditorModal({
   onCancel,
   onSave,
   onDelete,
+  onCopyToDone,
 }: BlockEditorModalProps) {
   const insets = useSafeAreaInsets();
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
@@ -377,6 +379,14 @@ export function BlockEditorModal({
                 style={[styles.secondaryButton, styles.deleteButton]}
                 onPress={onDelete}>
                 <Text style={styles.deleteButtonText}>Delete</Text>
+              </Pressable>
+            ) : null}
+            {mode === 'edit' && lane === 'planned' && onCopyToDone ? (
+              <Pressable
+                accessibilityLabel="Copy block to done"
+                style={[styles.secondaryButton, styles.copyButton]}
+                onPress={onCopyToDone}>
+                <Text style={styles.copyButtonText}>Copy to Done</Text>
               </Pressable>
             ) : null}
             <Pressable
@@ -771,6 +781,14 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: {
     color: '#991B1B',
+    fontWeight: '700',
+  },
+  copyButton: {
+    backgroundColor: UI_COLORS.plannedTint,
+    borderColor: UI_COLORS.planned,
+  },
+  copyButtonText: {
+    color: UI_COLORS.planned,
     fontWeight: '700',
   },
   primaryButton: {

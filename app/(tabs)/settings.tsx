@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -6,6 +6,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Share,
   Switch,
   StyleSheet,
   Text,
@@ -13,12 +14,17 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
-import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
+import { TAG_CATALOG } from '@/src/constants/tags';
+import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryLabel } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { seedLastNDays } from '@/src/dev/seedData';
+import { getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
+import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
+import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
+import { formatDuration, formatHHMM, parseHHMM } from '@/src/utils/time';
 
 const CATEGORY_COLORS = [
   '#3B82F6',
@@ -31,6 +37,179 @@ const CATEGORY_COLORS = [
   '#EF4444',
 ];
 const SHEET_VISIBLE_HEIGHT = '86%';
+type TagFilter = 'all' | (typeof TAG_CATALOG)[number];
+type ParsedSummaryBlock = {
+  lane: Lane;
+  title: string;
+  tags: string[];
+  startMin: number;
+  endMin: number;
+};
+
+function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
+  return [...items].sort(
+    (a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.id.localeCompare(b.id)
+  );
+}
+
+function hasOverlap(
+  lane: Lane,
+  startMin: number,
+  endMin: number,
+  blocks: TimeBlock[]
+): boolean {
+  return blocks.some((other) => {
+    if (other.lane !== lane) {
+      return false;
+    }
+
+    return startMin < other.endMin && endMin > other.startMin;
+  });
+}
+
+function isExcludedFromMetrics(block: TimeBlock): boolean {
+  const key = block.tags[0]?.trim().toLowerCase() || 'uncategorized';
+  return key === 'other' || key === 'none';
+}
+
+function formatBlockLine(block: TimeBlock): string {
+  const tagsText = block.tags.length > 0 ? block.tags.join(', ') : 'none';
+  return `${formatHHMM(block.startMin)}-${formatHHMM(block.endMin)} | ${block.title} | tags: ${tagsText}`;
+}
+
+function buildTagTotals(
+  blocks: TimeBlock[]
+): { tag: string; plannedMin: number; actualMin: number; deltaMin: number }[] {
+  const totals = new Map<string, { plannedMin: number; actualMin: number }>();
+
+  blocks.forEach((block) => {
+    const duration = Math.max(0, block.endMin - block.startMin);
+    block.tags.forEach((rawTag) => {
+      const tag = rawTag.trim().toLowerCase();
+      if (!tag) {
+        return;
+      }
+
+      const current = totals.get(tag) ?? { plannedMin: 0, actualMin: 0 };
+      if (block.lane === 'planned') {
+        current.plannedMin += duration;
+      } else {
+        current.actualMin += duration;
+      }
+      totals.set(tag, current);
+    });
+  });
+
+  return [...totals.entries()]
+    .map(([tag, value]) => ({
+      tag,
+      plannedMin: value.plannedMin,
+      actualMin: value.actualMin,
+      deltaMin: value.actualMin - value.plannedMin,
+    }))
+    .sort((a, b) => b.actualMin - a.actualMin || a.tag.localeCompare(b.tag));
+}
+
+function parseTagFilterParam(input: string | string[] | undefined): TagFilter | null {
+  const raw = Array.isArray(input) ? input[0] : input;
+  if (!raw) {
+    return null;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'all') {
+    return 'all';
+  }
+
+  return (TAG_CATALOG as readonly string[]).includes(normalized) ? (normalized as TagFilter) : null;
+}
+
+function parseSummaryBlockLine(line: string, lane: Lane): ParsedSummaryBlock | null {
+  const tagMarker = ' | tags: ';
+  const tagIndex = line.lastIndexOf(tagMarker);
+  if (tagIndex <= 0) {
+    return null;
+  }
+
+  const left = line.slice(0, tagIndex).trim();
+  const tagsRaw = line.slice(tagIndex + tagMarker.length).trim();
+  const leftSeparatorIndex = left.indexOf(' | ');
+  if (leftSeparatorIndex <= 0) {
+    return null;
+  }
+
+  const timeRange = left.slice(0, leftSeparatorIndex).trim();
+  const title = left.slice(leftSeparatorIndex + 3).trim();
+  const hyphenIndex = timeRange.indexOf('-');
+  if (hyphenIndex <= 0) {
+    return null;
+  }
+
+  const startText = timeRange.slice(0, hyphenIndex).trim();
+  const endText = timeRange.slice(hyphenIndex + 1).trim();
+  const startMin = parseHHMM(startText);
+  const endMin = parseHHMM(endText);
+  if (startMin === null || endMin === null || endMin <= startMin) {
+    return null;
+  }
+
+  const tags =
+    tagsRaw.toLowerCase() === 'none'
+      ? []
+      : tagsRaw
+          .split(',')
+          .map((tag) => tag.trim().toLowerCase())
+          .filter((tag) => tag.length > 0);
+
+  return {
+    lane,
+    title,
+    tags: tags.length ? [tags[0]] : [],
+    startMin,
+    endMin,
+  };
+}
+
+function parseSummaryInput(input: string): { blocks: ParsedSummaryBlock[]; invalidLines: number } {
+  const lines = input.split(/\r?\n/).map((line) => line.trim());
+  const blocks: ParsedSummaryBlock[] = [];
+  let invalidLines = 0;
+  let section: Lane | null = null;
+
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+    if (line === 'Plan blocks:') {
+      section = 'planned';
+      continue;
+    }
+    if (line === 'Done blocks:') {
+      section = 'actual';
+      continue;
+    }
+    if (section === null || line === 'none') {
+      continue;
+    }
+
+    const parsed = parseSummaryBlockLine(line, section);
+    if (!parsed) {
+      invalidLines += 1;
+      continue;
+    }
+    blocks.push(parsed);
+  }
+
+  return { blocks, invalidLines };
+}
+
+function getBlockIdentityKey(input: { lane: Lane; title: string; startMin: number; endMin: number }): string {
+  return `${input.lane}|${input.startMin}|${input.endMin}|${input.title.trim().toLowerCase()}`;
+}
+
+function getPlanLinkKey(input: { title: string; startMin: number; endMin: number }): string {
+  return `${input.startMin}|${input.endMin}|${input.title.trim().toLowerCase()}`;
+}
 
 function normalizeCategoryId(input: string): string {
   const normalized = input.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
@@ -39,7 +218,15 @@ function normalizeCategoryId(input: string): string {
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { settings, updateSettings, resetAllData, signalDataChanged } = useAppSettings();
+  const { dayKey: dayKeyParam, tagFilter: tagFilterParam } = useLocalSearchParams<{
+    dayKey?: string | string[];
+    tagFilter?: string | string[];
+  }>();
+  const routeDayKeyRaw = Array.isArray(dayKeyParam) ? dayKeyParam[0] : dayKeyParam;
+  const routeDayKey = routeDayKeyRaw && dayKeyToLocalDate(routeDayKeyRaw) ? routeDayKeyRaw : null;
+  const timelineDayKey = routeDayKey ?? getLocalDayKey();
+  const routeTagFilter = parseTagFilterParam(tagFilterParam);
+  const { settings, updateSettings, resetAllData, signalDataChanged, dataVersion } = useAppSettings();
   const [saving, setSaving] = useState(false);
   const [categoryName, setCategoryName] = useState('');
   const [categoryColor, setCategoryColor] = useState(CATEGORY_COLORS[0]);
@@ -47,8 +234,59 @@ export default function SettingsScreen() {
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingCategoryColor, setEditingCategoryColor] = useState(CATEGORY_COLORS[0]);
   const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
+  const [importSummaryVisible, setImportSummaryVisible] = useState(false);
+  const [importSummaryText, setImportSummaryText] = useState('');
+  const [timelineBlocks, setTimelineBlocks] = useState<TimeBlock[]>([]);
 
   const activeLegalDoc = LEGAL_DOCUMENTS.find((document) => document.key === activeLegalDocKey) ?? null;
+  const timelineDateLabel = useMemo(() => {
+    const date = dayKeyToLocalDate(timelineDayKey);
+    if (!date) {
+      return timelineDayKey;
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(date);
+  }, [timelineDayKey]);
+  const timelineTagTotals = useMemo(
+    () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromMetrics(block))),
+    [timelineBlocks]
+  );
+  const timelineTagFilterOptions = useMemo(() => {
+    const options = new Set<TagFilter>(['all']);
+    timelineTagTotals.forEach((row) => {
+      if ((TAG_CATALOG as readonly string[]).includes(row.tag)) {
+        options.add(row.tag as TagFilter);
+      }
+    });
+
+    for (const tag of TAG_CATALOG) {
+      if (options.size >= 6) {
+        break;
+      }
+      options.add(tag);
+    }
+
+    return [...options];
+  }, [timelineTagTotals]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const blocks = await getBlocksForDay(timelineDayKey);
+      if (!cancelled) {
+        setTimelineBlocks(sortByStartMin(blocks));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataVersion, timelineDayKey]);
 
   const addCategory = async () => {
     const label = categoryName.trim();
@@ -209,6 +447,235 @@ export default function SettingsScreen() {
     );
   };
 
+  const shareTimelineSummary = useCallback(() => {
+    const metricBlocks = timelineBlocks.filter((block) => !isExcludedFromMetrics(block));
+    const plannedBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned'));
+    const actualBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual'));
+    const plannedTotal = plannedBlocks.reduce((total, block) => total + Math.max(0, block.endMin - block.startMin), 0);
+    const doneTotal = actualBlocks.reduce((total, block) => total + Math.max(0, block.endMin - block.startMin), 0);
+    const tagLines = timelineTagTotals.length
+      ? timelineTagTotals
+          .map(
+            (row) =>
+              `${row.tag}: plan ${formatDuration(row.plannedMin)}, done ${formatDuration(
+                row.actualMin
+              )}, delta ${row.deltaMin >= 0 ? '+' : '-'}${formatDuration(row.deltaMin)}`
+          )
+          .join('\n')
+      : 'none';
+    const plannedLines = plannedBlocks.length ? plannedBlocks.map(formatBlockLine).join('\n') : 'none';
+    const actualLines = actualBlocks.length ? actualBlocks.map(formatBlockLine).join('\n') : 'none';
+    const summary = [
+      `Date: ${timelineDateLabel}`,
+      `Plan total: ${formatDuration(plannedTotal)}`,
+      `Done total: ${formatDuration(doneTotal)}`,
+      `Delta: ${doneTotal - plannedTotal >= 0 ? '+' : '-'}${formatDuration(doneTotal - plannedTotal)}`,
+      '',
+      'Tag totals:',
+      tagLines,
+      '',
+      'Plan blocks:',
+      plannedLines,
+      '',
+      'Done blocks:',
+      actualLines,
+    ].join('\n');
+
+    void Share.share({
+      message: summary,
+      title: `Day summary ${timelineDayKey}`,
+    });
+  }, [timelineBlocks, timelineDateLabel, timelineDayKey, timelineTagTotals]);
+
+  const importTimelineSummary = useCallback(() => {
+    const parsed = parseSummaryInput(importSummaryText);
+    if (parsed.blocks.length === 0) {
+      Alert.alert('Nothing to import', 'Paste a valid shared summary with plan and/or done blocks.');
+      return;
+    }
+
+    void (async () => {
+      setSaving(true);
+      try {
+        const existingBlocks = sortByStartMin(await getBlocksForDay(timelineDayKey));
+        const workingBlocks = [...existingBlocks];
+        const existingIdentity = new Set(
+          existingBlocks.map((block) =>
+            getBlockIdentityKey({
+              lane: block.lane,
+              title: block.title,
+              startMin: block.startMin,
+              endMin: block.endMin,
+            })
+          )
+        );
+        const planLinkByKey = new Map<string, string>();
+        existingBlocks.forEach((block) => {
+          if (block.lane === 'planned') {
+            planLinkByKey.set(
+              getPlanLinkKey({ title: block.title, startMin: block.startMin, endMin: block.endMin }),
+              block.id
+            );
+          }
+        });
+
+        let created = 0;
+        let skippedOverlap = 0;
+        let skippedDuplicate = 0;
+        const plannedFirst = [
+          ...parsed.blocks.filter((block) => block.lane === 'planned'),
+          ...parsed.blocks.filter((block) => block.lane === 'actual'),
+        ];
+
+        for (const block of plannedFirst) {
+          const identityKey = getBlockIdentityKey(block);
+          if (existingIdentity.has(identityKey)) {
+            skippedDuplicate += 1;
+            continue;
+          }
+
+          if (hasOverlap(block.lane, block.startMin, block.endMin, workingBlocks)) {
+            skippedOverlap += 1;
+            continue;
+          }
+
+          const linkedPlannedId =
+            block.lane === 'actual'
+              ? planLinkByKey.get(
+                  getPlanLinkKey({ title: block.title, startMin: block.startMin, endMin: block.endMin })
+                ) ?? null
+              : null;
+
+          const inserted = await insertBlock(
+            {
+              lane: block.lane,
+              title: block.title,
+              tags: block.tags,
+              startMin: block.startMin,
+              endMin: block.endMin,
+              linkedPlannedId: block.lane === 'actual' ? linkedPlannedId : undefined,
+            },
+            timelineDayKey
+          );
+          workingBlocks.push(inserted);
+          existingIdentity.add(identityKey);
+          if (inserted.lane === 'planned') {
+            planLinkByKey.set(
+              getPlanLinkKey({ title: inserted.title, startMin: inserted.startMin, endMin: inserted.endMin }),
+              inserted.id
+            );
+          }
+          created += 1;
+        }
+
+        signalDataChanged();
+        setImportSummaryVisible(false);
+        setImportSummaryText('');
+        Alert.alert(
+          'Import complete',
+          `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, invalid lines ${parsed.invalidLines}.`
+        );
+      } catch {
+        Alert.alert('Import error', 'Could not import summary.');
+      } finally {
+        setSaving(false);
+      }
+    })();
+  }, [importSummaryText, signalDataChanged, timelineDayKey]);
+
+  const copyPlanToDone = useCallback(() => {
+    void (async () => {
+      const planned = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'planned'));
+      const targetActual = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'actual'));
+      let created = 0;
+      let skipped = 0;
+
+      try {
+        for (const plannedBlock of planned) {
+          if (hasOverlap('actual', plannedBlock.startMin, plannedBlock.endMin, targetActual)) {
+            skipped += 1;
+            continue;
+          }
+
+          const inserted = await insertBlock(
+            {
+              lane: 'actual',
+              title: plannedBlock.title,
+              tags: [...plannedBlock.tags],
+              startMin: plannedBlock.startMin,
+              endMin: plannedBlock.endMin,
+            },
+            timelineDayKey
+          );
+
+          targetActual.push(inserted);
+          created += 1;
+        }
+
+        signalDataChanged();
+        Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
+      } catch {
+        signalDataChanged();
+        Alert.alert('Storage error', 'Could not finish copy plan to done.');
+      }
+    })();
+  }, [signalDataChanged, timelineBlocks, timelineDayKey]);
+
+  const isTimelineToday = timelineDayKey === getLocalDayKey();
+
+  const copyYesterdayPlanToToday = useCallback(() => {
+    if (!isTimelineToday) {
+      return;
+    }
+
+    void (async () => {
+      const yesterdayKey = shiftDayKey(timelineDayKey, -1);
+      try {
+        const yesterdayBlocks = await getBlocksForDay(yesterdayKey);
+        const yesterdayPlanned = sortByStartMin(yesterdayBlocks.filter((block) => block.lane === 'planned'));
+        const targetPlanned = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'planned'));
+        let created = 0;
+        let skipped = 0;
+
+        for (const plannedBlock of yesterdayPlanned) {
+          if (hasOverlap('planned', plannedBlock.startMin, plannedBlock.endMin, targetPlanned)) {
+            skipped += 1;
+            continue;
+          }
+
+          const inserted = await insertBlock(
+            {
+              lane: 'planned',
+              title: plannedBlock.title,
+              tags: [...plannedBlock.tags],
+              startMin: plannedBlock.startMin,
+              endMin: plannedBlock.endMin,
+            },
+            timelineDayKey
+          );
+          targetPlanned.push(inserted);
+          created += 1;
+        }
+
+        signalDataChanged();
+        Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
+      } catch {
+        signalDataChanged();
+        Alert.alert('Storage error', 'Could not copy yesterday plan blocks.');
+      }
+    })();
+  }, [isTimelineToday, signalDataChanged, timelineBlocks, timelineDayKey]);
+
+  const applyTimelineFilter = (filter: TagFilter) => {
+    router.replace({
+      pathname: '/(tabs)',
+      params: {
+        dayKey: timelineDayKey,
+        tagFilter: filter,
+      },
+    });
+  };
+
   const openSupportEmail = () => {
     void (async () => {
       const subject = encodeURIComponent('Plan vs Actual Support');
@@ -355,13 +822,58 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.section}>
-            <Pressable
-              accessibilityLabel="Reset all data"
-              style={styles.resetButton}
-              onPress={confirmResetAllData}
-              disabled={saving}>
-              <Text style={styles.resetButtonText}>Reset all data</Text>
-            </Pressable>
+            <Text style={styles.sectionTitle}>Timeline Actions</Text>
+            <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
+            <View style={styles.timelineActionList}>
+              <Pressable
+                accessibilityLabel="Share timeline summary"
+                style={styles.timelineActionButton}
+                onPress={shareTimelineSummary}>
+                <Text style={styles.timelineActionButtonText}>Share Summary</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Import timeline summary"
+                style={styles.timelineActionButton}
+                onPress={() => setImportSummaryVisible(true)}>
+                <Text style={styles.timelineActionButtonText}>Import Summary</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Copy plan blocks into done lane"
+                style={styles.timelineActionButton}
+                onPress={copyPlanToDone}>
+                <Text style={styles.timelineActionButtonText}>Copy Plan to Done</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Copy yesterday plan blocks to today"
+                style={[styles.timelineActionButton, !isTimelineToday && styles.timelineActionButtonDisabled]}
+                onPress={copyYesterdayPlanToToday}
+                disabled={!isTimelineToday}>
+                <Text
+                  style={[
+                    styles.timelineActionButtonText,
+                    !isTimelineToday && styles.timelineActionButtonTextDisabled,
+                  ]}>
+                  Copy Yesterday Plan
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.sectionTitle}>Timeline Filter</Text>
+            <View style={styles.filterRow}>
+              {timelineTagFilterOptions.map((option) => {
+                const selected = (routeTagFilter ?? 'all') === option;
+                const label = option === 'all' ? 'All' : getCategoryLabel(option);
+
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityLabel={`Show ${label} blocks on timeline`}
+                    style={[styles.filterChip, selected && styles.filterChipSelected]}
+                    onPress={() => applyTimelineFilter(option)}>
+                    <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
 
           <View style={styles.section}>
@@ -389,6 +901,16 @@ export default function SettingsScreen() {
                 <Ionicons name="mail-outline" size={16} color={UI_COLORS.neutralTextSoft} />
               </Pressable>
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <Pressable
+              accessibilityLabel="Reset all data"
+              style={styles.resetButton}
+              onPress={confirmResetAllData}
+              disabled={saving}>
+              <Text style={styles.resetButtonText}>Reset all data</Text>
+            </Pressable>
           </View>
           </ScrollView>
         </View>
@@ -490,6 +1012,51 @@ export default function SettingsScreen() {
                     <Text style={styles.legalSummary}>Public URL not configured yet.</Text>
                   </View>
                 )}
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={importSummaryVisible}
+        onRequestClose={() => setImportSummaryVisible(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setImportSummaryVisible(false)} />
+          <View style={styles.keyboardLift}>
+            <View style={styles.sheetCard}>
+              <View style={styles.sheetGrabber} />
+              <View style={styles.sheetHeaderRow}>
+                <Text style={styles.sheetTitle}>Import Summary</Text>
+                <Pressable
+                  accessibilityLabel="Close summary import"
+                  style={styles.sheetCloseButton}
+                  onPress={() => setImportSummaryVisible(false)}>
+                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                </Pressable>
+              </View>
+              <Text style={styles.toggleHint}>Paste text from Share Summary output.</Text>
+              <TextInput
+                value={importSummaryText}
+                onChangeText={setImportSummaryText}
+                multiline
+                textAlignVertical="top"
+                style={styles.summaryImportInput}
+                placeholder="Paste summary text here..."
+                placeholderTextColor="#94A3B8"
+              />
+              <View style={styles.editorActions}>
+                <Pressable style={styles.editorDeleteButton} onPress={() => setImportSummaryVisible(false)}>
+                  <Text style={styles.editorDeleteButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.editorSaveButton}
+                  disabled={saving}
+                  onPress={importTimelineSummary}>
+                  <Text style={styles.editorSaveButtonText}>Import</Text>
+                </Pressable>
               </View>
             </View>
           </View>
@@ -682,6 +1249,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  timelineActionList: {
+    gap: 8,
+  },
+  timelineActionButton: {
+    minHeight: 40,
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineActionButtonDisabled: {
+    backgroundColor: UI_COLORS.surfaceMuted,
+    opacity: 0.7,
+  },
+  timelineActionButtonText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  timelineActionButtonTextDisabled: {
+    color: UI_COLORS.neutralTextSoft,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  filterChipSelected: {
+    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: UI_COLORS.neutralText,
+  },
+  filterChipText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterChipTextSelected: {
+    color: UI_COLORS.neutralText,
+  },
   resetButton: {
     borderWidth: 1,
     borderColor: '#B91C1C',
@@ -732,6 +1349,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
+  },
+  summaryImportInput: {
+    minHeight: 220,
+    maxHeight: 360,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: UI_COLORS.neutralText,
+    backgroundColor: UI_COLORS.surface,
   },
   editorCard: {
     marginHorizontal: 16,

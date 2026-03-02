@@ -116,12 +116,14 @@ export default function MonthView() {
     const monthEnd = getMonthEnd(displayMonth);
     const startKey = toDayKey(monthStart);
     const endKey = toDayKey(monthEnd);
+    const fetchEndKey = endKey > todayKey ? todayKey : endKey;
     let cancelled = false;
 
     const load = async () => {
       setLoading(true);
       try {
-        const byDay = await getBlocksForDayRange(startKey, endKey);
+        const byDay =
+          startKey <= fetchEndKey ? await getBlocksForDayRange(startKey, fetchEndKey) : {};
         if (cancelled) {
           return;
         }
@@ -130,8 +132,12 @@ export default function MonthView() {
         const cursor = new Date(monthStart);
         while (cursor <= monthEnd) {
           const dayKey = toDayKey(cursor);
-          const summary = computeExecution(byDay[dayKey] ?? []);
-          nextScores[dayKey] = { ...summary, dayKey };
+          if (dayKey > todayKey) {
+            nextScores[dayKey] = { dayKey, plannedMinutes: 0, doneMinutes: 0, scorePercent: null };
+          } else {
+            const summary = computeExecution(byDay[dayKey] ?? []);
+            nextScores[dayKey] = { ...summary, dayKey };
+          }
           cursor.setDate(cursor.getDate() + 1);
         }
         setDayScores(nextScores);
@@ -146,15 +152,7 @@ export default function MonthView() {
     return () => {
       cancelled = true;
     };
-  }, [dataVersion, displayMonth]);
-
-  const canGoForward = (() => {
-    const now = new Date();
-    return (
-      displayMonth.getFullYear() < now.getFullYear() ||
-      (displayMonth.getFullYear() === now.getFullYear() && displayMonth.getMonth() < now.getMonth())
-    );
-  })();
+  }, [dataVersion, displayMonth, todayKey]);
 
   return (
     <View style={styles.screen}>
@@ -181,10 +179,9 @@ export default function MonthView() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Next month"
-          style={[styles.iconButton, !canGoForward && styles.iconButtonDisabled]}
-          onPress={() => setDisplayMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-          disabled={!canGoForward}>
-          <Ionicons name="chevron-forward" size={18} color={canGoForward ? UI_COLORS.neutralText : '#94A3B8'} />
+          style={styles.iconButton}
+          onPress={() => setDisplayMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}>
+          <Ionicons name="chevron-forward" size={18} color={UI_COLORS.neutralText} />
         </Pressable>
       </View>
 
