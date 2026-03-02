@@ -1722,6 +1722,18 @@ export default function DayTimeline() {
   const hasAnyBlocks = sortedBlocks.length > 0;
   const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE;
   const nowTimeLabel = formatCurrentTimeLabel(nowMinute);
+  const timelineCanvasHeight = TIMELINE_HEIGHT + insets.bottom;
+  const hourLineOffsets = useMemo(() => {
+    const baseOffsets = Array.from({ length: 25 }, (_, index) => index * 60 * PIXELS_PER_MINUTE);
+    const bottomRuleOffset = Math.max(0, timelineCanvasHeight - StyleSheet.hairlineWidth);
+    const lastBaseOffset = baseOffsets[baseOffsets.length - 1] ?? 0;
+
+    if (bottomRuleOffset > lastBaseOffset) {
+      baseOffsets.push(bottomRuleOffset);
+    }
+
+    return baseOffsets;
+  }, [timelineCanvasHeight]);
   const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
     ? 'compare'
     : laneVisibility.planned
@@ -1868,7 +1880,6 @@ export default function DayTimeline() {
           paddingTop: insets.top,
           paddingLeft: 12 + insets.left,
           paddingRight: 12 + insets.right,
-          paddingBottom: insets.bottom,
         },
       ]}>
       <View style={styles.topHeaderRow}>
@@ -2007,14 +2018,14 @@ export default function DayTimeline() {
             ref={timelineScrollRef}
             scrollEnabled={activeDragId === null && !isCreatingDraft}
             style={styles.scrollView}
-            contentContainerStyle={[styles.scrollContent, { height: TIMELINE_HEIGHT }]}
+            contentContainerStyle={[styles.scrollContent, { minHeight: timelineCanvasHeight }]}
             onLayout={syncTimelineViewportTop}
             onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
               timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
             }}
             scrollEventThrottle={16}
             showsVerticalScrollIndicator>
-        <View style={[styles.timelineBody, { height: TIMELINE_HEIGHT }]}>
+        <View style={[styles.timelineBody, { height: timelineCanvasHeight }]}>
           <View style={styles.timeColumn}>
             {Array.from({ length: 24 }, (_, hour) => {
               const top = hour * 60 * PIXELS_PER_MINUTE;
@@ -2034,7 +2045,12 @@ export default function DayTimeline() {
                   key={lane}
                   gesture={lane === 'planned' ? plannedCreateGesture : actualCreateGesture}>
                   <View
-                    style={[styles.laneSurface, styles.compareLane, laneIndex === 0 && styles.compareLaneLeft]}
+                    style={[
+                      styles.laneSurface,
+                      styles.compareLane,
+                      laneIndex === 0 && styles.compareLaneLeft,
+                      { height: timelineCanvasHeight },
+                    ]}
                     onStartShouldSetResponderCapture={() => {
                       if (focusedPlannedId !== null) {
                         setFocusedPlannedId(null);
@@ -2042,9 +2058,7 @@ export default function DayTimeline() {
 
                       return false;
                     }}>
-                    {Array.from({ length: 25 }, (_, index) => {
-                      const top = index * 60 * PIXELS_PER_MINUTE;
-
+                    {hourLineOffsets.map((top, index) => {
                       return <View key={index} style={[styles.hourLine, { top }]} />;
                     })}
                     {renderedLaneBlocks[lane].map(({ block, dimmed }) => (
@@ -2094,7 +2108,7 @@ export default function DayTimeline() {
           ) : (
             <GestureDetector gesture={createGesture}>
               <View
-                style={styles.laneSurface}
+                style={[styles.laneSurface, { height: timelineCanvasHeight }]}
                 onStartShouldSetResponderCapture={() => {
                   if (focusedPlannedId !== null) {
                     setFocusedPlannedId(null);
@@ -2102,9 +2116,7 @@ export default function DayTimeline() {
 
                   return false;
                 }}>
-                {Array.from({ length: 25 }, (_, index) => {
-                  const top = index * 60 * PIXELS_PER_MINUTE;
-
+                {hourLineOffsets.map((top, index) => {
                   return <View key={index} style={[styles.hourLine, { top }]} />;
                 })}
 
@@ -2168,7 +2180,7 @@ export default function DayTimeline() {
           </ScrollView>
         </View>
 
-      <Text style={styles.feedbackText}>{feedbackMessage ?? ' '}</Text>
+      {feedbackMessage ? <Text style={[styles.feedbackText, { bottom: 8 + insets.bottom }]}>{feedbackMessage}</Text> : null}
 
       <BlockEditorModal
         visible={editorState.visible}
@@ -2598,10 +2610,13 @@ const styles = StyleSheet.create({
     borderColor: UI_COLORS.glassStroke,
   },
   feedbackText: {
-    minHeight: 18,
-    marginBottom: 8,
+    position: 'absolute',
+    left: 12,
+    right: 12,
     fontSize: 12,
     color: UI_COLORS.neutralTextSoft,
+    textAlign: 'center',
+    zIndex: 10,
   },
   emptyState: {
     paddingVertical: 8,
@@ -2676,7 +2691,6 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     borderRadius: 0,
     backgroundColor: UI_COLORS.glassSurface,
-    marginBottom: 2,
     overflow: 'hidden',
   },
   scrollContent: {
@@ -2705,7 +2719,6 @@ const styles = StyleSheet.create({
   laneSurface: {
     flex: 1,
     position: 'relative',
-    height: TIMELINE_HEIGHT,
   },
   compareWrap: {
     flex: 1,
