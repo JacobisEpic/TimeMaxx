@@ -8,6 +8,7 @@ export type AppSettings = {
   dimInsteadOfHide: boolean;
   debugMode: boolean;
   categories: { id: string; label: string; color: string }[];
+  visibleCategoryIds: string[];
 };
 
 type AppSettingsContextValue = {
@@ -34,6 +35,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   dimInsteadOfHide: false,
   debugMode: false,
   categories: DEFAULT_CATEGORIES,
+  visibleCategoryIds: DEFAULT_CATEGORIES.map((category) => category.id),
 };
 
 const META_KEYS = {
@@ -42,6 +44,7 @@ const META_KEYS = {
   dimInsteadOfHide: 'settings_dim_instead_of_hide',
   debugMode: 'settings_debug_mode',
   categories: 'settings_categories',
+  visibleCategoryIds: 'settings_visible_category_ids',
 } as const;
 
 function normalizeCategoryId(input: string): string {
@@ -99,6 +102,38 @@ function parseCategoriesSetting(
   }
 }
 
+function parseVisibleCategoryIdsSetting(
+  rawValue: string | null,
+  categories: AppSettings['categories'],
+  fallback: string[]
+): string[] {
+  const allowedIds = new Set(categories.map((category) => category.id));
+  const defaultVisible = fallback.filter((id) => allowedIds.has(id));
+
+  if (!rawValue) {
+    return defaultVisible.length ? defaultVisible : categories.map((category) => category.id);
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) {
+      return defaultVisible.length ? defaultVisible : categories.map((category) => category.id);
+    }
+
+    const sanitized = parsed
+      .map((item) => String(item ?? '').trim().toLowerCase())
+      .filter((id, index, self) => id.length > 0 && self.indexOf(id) === index && allowedIds.has(id));
+
+    if (sanitized.length === 0) {
+      return defaultVisible.length ? defaultVisible : categories.map((category) => category.id);
+    }
+
+    return sanitized;
+  } catch {
+    return defaultVisible.length ? defaultVisible : categories.map((category) => category.id);
+  }
+}
+
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
 
 function parseMinuteSetting(rawValue: string | null, fallback: number): number {
@@ -129,20 +164,27 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [dataVersion, setDataVersion] = useState(0);
 
   const refreshSettings = useCallback(async () => {
-    const [plannedRaw, actualRaw, dimRaw, debugRaw, categoriesRaw] = await Promise.all([
+    const [plannedRaw, actualRaw, dimRaw, debugRaw, categoriesRaw, visibleCategoryIdsRaw] = await Promise.all([
       getMetaValue(META_KEYS.plannedScanStartMin),
       getMetaValue(META_KEYS.actualScanStartMin),
       getMetaValue(META_KEYS.dimInsteadOfHide),
       getMetaValue(META_KEYS.debugMode),
       getMetaValue(META_KEYS.categories),
+      getMetaValue(META_KEYS.visibleCategoryIds),
     ]);
+    const categories = parseCategoriesSetting(categoriesRaw, DEFAULT_SETTINGS.categories);
 
     setSettings({
       plannedScanStartMin: parseMinuteSetting(plannedRaw, DEFAULT_SETTINGS.plannedScanStartMin),
       actualScanStartMin: parseMinuteSetting(actualRaw, DEFAULT_SETTINGS.actualScanStartMin),
       dimInsteadOfHide: parseBooleanSetting(dimRaw, DEFAULT_SETTINGS.dimInsteadOfHide),
       debugMode: parseBooleanSetting(debugRaw, DEFAULT_SETTINGS.debugMode),
-      categories: parseCategoriesSetting(categoriesRaw, DEFAULT_SETTINGS.categories),
+      categories,
+      visibleCategoryIds: parseVisibleCategoryIdsSetting(
+        visibleCategoryIdsRaw,
+        categories,
+        DEFAULT_SETTINGS.visibleCategoryIds
+      ),
     });
   }, []);
 
@@ -162,6 +204,12 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
         ...settings,
         ...patch,
       };
+      const allowedCategoryIds = new Set(nextSettings.categories.map((category) => category.id));
+      const sanitizedVisibleCategoryIds = (nextSettings.visibleCategoryIds ?? [])
+        .map((id) => id.trim().toLowerCase())
+        .filter((id, index, self) => id.length > 0 && self.indexOf(id) === index && allowedCategoryIds.has(id));
+      nextSettings.visibleCategoryIds =
+        sanitizedVisibleCategoryIds.length > 0 ? sanitizedVisibleCategoryIds : nextSettings.categories.map((category) => category.id);
 
       await Promise.all([
         setMetaValue(META_KEYS.plannedScanStartMin, String(nextSettings.plannedScanStartMin)),
@@ -169,6 +217,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
         setMetaValue(META_KEYS.dimInsteadOfHide, nextSettings.dimInsteadOfHide ? '1' : '0'),
         setMetaValue(META_KEYS.debugMode, nextSettings.debugMode ? '1' : '0'),
         setMetaValue(META_KEYS.categories, JSON.stringify(nextSettings.categories)),
+        setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(nextSettings.visibleCategoryIds)),
       ]);
 
       setSettings(nextSettings);
@@ -180,8 +229,13 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     await Promise.all([
       clearAllBlocks(),
       setMetaValue(META_KEYS.categories, JSON.stringify(DEFAULT_CATEGORIES)),
+      setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(DEFAULT_SETTINGS.visibleCategoryIds)),
     ]);
-    setSettings((current) => ({ ...current, categories: DEFAULT_CATEGORIES }));
+    setSettings((current) => ({
+      ...current,
+      categories: DEFAULT_CATEGORIES,
+      visibleCategoryIds: DEFAULT_SETTINGS.visibleCategoryIds,
+    }));
     setDataVersion((current) => current + 1);
   }, []);
 

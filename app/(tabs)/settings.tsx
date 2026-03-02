@@ -17,8 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
-import { TAG_CATALOG } from '@/src/constants/tags';
-import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryLabel } from '@/src/constants/uiTheme';
+import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { seedLastNDays } from '@/src/dev/seedData';
 import { getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
@@ -28,16 +27,29 @@ import { formatDuration, formatHHMM, parseHHMM } from '@/src/utils/time';
 
 const CATEGORY_COLORS = [
   '#3B82F6',
-  '#8B5CF6',
   '#22C55E',
-  '#0EA5A4',
-  '#14B8A6',
-  '#F59E0B',
-  '#94A3B8',
+  '#8B5CF6',
+  '#EC4899',
   '#EF4444',
+  '#F59E0B',
+  '#EAB308',
+  '#F97316',
+  '#06B6D4',
+  '#14B8A6',
+  '#0EA5A4',
+  '#10B981',
+  '#84CC16',
+  '#6366F1',
+  '#A855F7',
+  '#D946EF',
+  '#0F766E',
+  '#1D4ED8',
+  '#7C3AED',
+  '#B91C1C',
+  '#475569',
+  '#94A3B8',
 ];
 const SHEET_VISIBLE_HEIGHT = '86%';
-type TagFilter = 'all' | (typeof TAG_CATALOG)[number];
 type ParsedSummaryBlock = {
   lane: Lane;
   title: string;
@@ -108,20 +120,6 @@ function buildTagTotals(
       deltaMin: value.actualMin - value.plannedMin,
     }))
     .sort((a, b) => b.actualMin - a.actualMin || a.tag.localeCompare(b.tag));
-}
-
-function parseTagFilterParam(input: string | string[] | undefined): TagFilter | null {
-  const raw = Array.isArray(input) ? input[0] : input;
-  if (!raw) {
-    return null;
-  }
-
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === 'all') {
-    return 'all';
-  }
-
-  return (TAG_CATALOG as readonly string[]).includes(normalized) ? (normalized as TagFilter) : null;
 }
 
 function parseSummaryBlockLine(line: string, lane: Lane): ParsedSummaryBlock | null {
@@ -216,23 +214,34 @@ function normalizeCategoryId(input: string): string {
   return normalized || 'category';
 }
 
+function normalizeHexColor(input: string): string | null {
+  const normalized = input.trim().toUpperCase();
+  if (!/^#[0-9A-F]{6}$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
-  const { dayKey: dayKeyParam, tagFilter: tagFilterParam } = useLocalSearchParams<{
+  const { dayKey: dayKeyParam } = useLocalSearchParams<{
     dayKey?: string | string[];
-    tagFilter?: string | string[];
   }>();
   const routeDayKeyRaw = Array.isArray(dayKeyParam) ? dayKeyParam[0] : dayKeyParam;
   const routeDayKey = routeDayKeyRaw && dayKeyToLocalDate(routeDayKeyRaw) ? routeDayKeyRaw : null;
   const timelineDayKey = routeDayKey ?? getLocalDayKey();
-  const routeTagFilter = parseTagFilterParam(tagFilterParam);
   const { settings, updateSettings, resetAllData, signalDataChanged, dataVersion } = useAppSettings();
   const [saving, setSaving] = useState(false);
   const [categoryName, setCategoryName] = useState('');
   const [categoryColor, setCategoryColor] = useState(CATEGORY_COLORS[0]);
+  const [showAddCustomColorInput, setShowAddCustomColorInput] = useState(false);
+  const [customAddColorInput, setCustomAddColorInput] = useState('');
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingCategoryColor, setEditingCategoryColor] = useState(CATEGORY_COLORS[0]);
+  const [showEditCustomColorInput, setShowEditCustomColorInput] = useState(false);
+  const [customEditColorInput, setCustomEditColorInput] = useState('');
   const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
   const [importSummaryVisible, setImportSummaryVisible] = useState(false);
   const [importSummaryText, setImportSummaryText] = useState('');
@@ -258,23 +267,48 @@ export default function SettingsScreen() {
     () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromMetrics(block))),
     [timelineBlocks]
   );
-  const timelineTagFilterOptions = useMemo(() => {
-    const options = new Set<TagFilter>(['all']);
-    timelineTagTotals.forEach((row) => {
-      if ((TAG_CATALOG as readonly string[]).includes(row.tag)) {
-        options.add(row.tag as TagFilter);
-      }
-    });
-
-    for (const tag of TAG_CATALOG) {
-      if (options.size >= 6) {
-        break;
-      }
-      options.add(tag);
+  const visibleCategoryIdSet = useMemo(
+    () => new Set(settings.visibleCategoryIds.map((id) => id.toLowerCase())),
+    [settings.visibleCategoryIds]
+  );
+  const usedCategoryColorSet = useMemo(
+    () => new Set(settings.categories.map((category) => category.color.trim().toUpperCase())),
+    [settings.categories]
+  );
+  const allCategoryColors = useMemo(() => {
+    const all = [...CATEGORY_COLORS, ...settings.categories.map((category) => category.color)];
+    return all.filter((color, index, self) => self.indexOf(color) === index);
+  }, [settings.categories]);
+  const addColorOptions = useMemo(
+    () =>
+      allCategoryColors.filter((color) => {
+        const normalized = color.trim().toUpperCase();
+        return !usedCategoryColorSet.has(normalized) || normalized === categoryColor.trim().toUpperCase();
+      }),
+    [allCategoryColors, categoryColor, usedCategoryColorSet]
+  );
+  const editingCategoryColorSetExcludingCurrent = useMemo(() => {
+    if (!editingCategoryId) {
+      return new Set<string>();
     }
 
-    return [...options];
-  }, [timelineTagTotals]);
+    return new Set(
+      settings.categories
+        .filter((category) => category.id !== editingCategoryId)
+        .map((category) => category.color.trim().toUpperCase())
+    );
+  }, [editingCategoryId, settings.categories]);
+  const editColorOptions = useMemo(
+    () =>
+      allCategoryColors.filter((color) => {
+        const normalized = color.trim().toUpperCase();
+        return (
+          !editingCategoryColorSetExcludingCurrent.has(normalized) ||
+          normalized === editingCategoryColor.trim().toUpperCase()
+        );
+      }),
+    [allCategoryColors, editingCategoryColor, editingCategoryColorSetExcludingCurrent]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -295,6 +329,32 @@ export default function SettingsScreen() {
       setCopyPlanSourceDayKey(shiftDayKey(timelineDayKey, -1));
     }
   }, [copyPlanFromDayVisible, timelineDayKey]);
+
+  useEffect(() => {
+    if (addColorOptions.length === 0) {
+      return;
+    }
+
+    const hasSelected = addColorOptions.some(
+      (color) => color.trim().toUpperCase() === categoryColor.trim().toUpperCase()
+    );
+    if (!hasSelected) {
+      setCategoryColor(addColorOptions[0]);
+    }
+  }, [addColorOptions, categoryColor]);
+
+  useEffect(() => {
+    if (editColorOptions.length === 0) {
+      return;
+    }
+
+    const hasSelected = editColorOptions.some(
+      (color) => color.trim().toUpperCase() === editingCategoryColor.trim().toUpperCase()
+    );
+    if (!hasSelected) {
+      setEditingCategoryColor(editColorOptions[0]);
+    }
+  }, [editColorOptions, editingCategoryColor]);
 
   const addCategory = async () => {
     const label = categoryName.trim();
@@ -317,6 +377,8 @@ export default function SettingsScreen() {
         categories: [...settings.categories, { id, label, color: categoryColor }],
       });
       setCategoryName('');
+      setShowAddCustomColorInput(false);
+      setCustomAddColorInput('');
     } catch {
       Alert.alert('Settings error', 'Could not add category.');
     } finally {
@@ -354,12 +416,54 @@ export default function SettingsScreen() {
     setEditingCategoryId(category.id);
     setEditingCategoryName(category.label);
     setEditingCategoryColor(category.color);
+    setShowEditCustomColorInput(false);
+    setCustomEditColorInput('');
   };
 
   const closeCategoryEditor = () => {
     setEditingCategoryId(null);
     setEditingCategoryName('');
     setEditingCategoryColor(CATEGORY_COLORS[0]);
+    setShowEditCustomColorInput(false);
+    setCustomEditColorInput('');
+  };
+
+  const applyAddCustomColor = () => {
+    const normalized = normalizeHexColor(customAddColorInput);
+    if (!normalized) {
+      Alert.alert('Invalid color', 'Enter a valid hex color like #22C55E.');
+      return;
+    }
+
+    if (usedCategoryColorSet.has(normalized)) {
+      Alert.alert('Color in use', 'That color is already used by another category.');
+      return;
+    }
+
+    setCategoryColor(normalized);
+    setCustomAddColorInput('');
+    setShowAddCustomColorInput(false);
+  };
+
+  const applyEditCustomColor = () => {
+    if (!editingCategoryId) {
+      return;
+    }
+
+    const normalized = normalizeHexColor(customEditColorInput);
+    if (!normalized) {
+      Alert.alert('Invalid color', 'Enter a valid hex color like #22C55E.');
+      return;
+    }
+
+    if (editingCategoryColorSetExcludingCurrent.has(normalized)) {
+      Alert.alert('Color in use', 'That color is already used by another category.');
+      return;
+    }
+
+    setEditingCategoryColor(normalized);
+    setCustomEditColorInput('');
+    setShowEditCustomColorInput(false);
   };
 
   const saveCategoryEditor = async () => {
@@ -383,6 +487,29 @@ export default function SettingsScreen() {
       closeCategoryEditor();
     } catch {
       Alert.alert('Settings error', 'Could not update category.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleCategoryVisibility = async (categoryId: string) => {
+    const normalizedId = categoryId.trim().toLowerCase();
+    const currentlyVisible = settings.visibleCategoryIds.map((id) => id.toLowerCase());
+    const isVisible = currentlyVisible.includes(normalizedId);
+    const nextVisible = isVisible
+      ? currentlyVisible.filter((id) => id !== normalizedId)
+      : [...currentlyVisible, normalizedId];
+
+    if (nextVisible.length === 0) {
+      Alert.alert('Keep one visible', 'Select at least one category to keep timeline blocks visible.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateSettings({ visibleCategoryIds: nextVisible });
+    } catch {
+      Alert.alert('Settings error', 'Could not update timeline visibility filters.');
     } finally {
       setSaving(false);
     }
@@ -640,16 +767,6 @@ export default function SettingsScreen() {
     })();
   }, [copyPlanSourceDayKey, signalDataChanged, timelineBlocks, timelineDayKey]);
 
-  const applyTimelineFilter = (filter: TagFilter) => {
-    router.replace({
-      pathname: '/(tabs)',
-      params: {
-        dayKey: timelineDayKey,
-        tagFilter: filter,
-      },
-    });
-  };
-
   const openSupportEmail = () => {
     void (async () => {
       const subject = encodeURIComponent('Plan vs Actual Support');
@@ -713,6 +830,87 @@ export default function SettingsScreen() {
             keyboardDismissMode="interactive"
             onScrollBeginDrag={() => Keyboard.dismiss()}>
           <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Categories</Text>
+            <View style={styles.listGroup}>
+              {settings.categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  style={[styles.listRow, styles.categoryRow]}
+                  onPress={() => openCategoryEditor(category.id)}
+                  accessibilityLabel={`Edit ${category.label} category`}>
+                  <View style={styles.categoryMain}>
+                    <Pressable
+                      accessibilityLabel={`${visibleCategoryIdSet.has(category.id) ? 'Hide' : 'Show'} ${category.label} on timeline`}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: visibleCategoryIdSet.has(category.id) }}
+                      style={styles.categoryVisibilityToggle}
+                      onPress={() => void toggleCategoryVisibility(category.id)}>
+                      <Ionicons
+                        name={visibleCategoryIdSet.has(category.id) ? 'checkbox' : 'square-outline'}
+                        size={17}
+                        color={visibleCategoryIdSet.has(category.id) ? category.color : UI_COLORS.neutralTextSoft}
+                      />
+                    </Pressable>
+                    <View style={[styles.colorDot, { backgroundColor: category.color }]} />
+                    <Text style={styles.categoryName}>{category.label}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.addCategoryForm}>
+              <TextInput
+                value={categoryName}
+                onChangeText={setCategoryName}
+                style={styles.categoryInput}
+                placeholder="New category name"
+                placeholderTextColor="#94A3B8"
+              />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.colorRow}>
+                {addColorOptions.map((color) => {
+                  const selected = color === categoryColor;
+                  return (
+                    <Pressable
+                      key={`new-${color}`}
+                      accessibilityLabel={`Choose ${color} for new category`}
+                      style={[styles.colorChoice, { backgroundColor: color }, selected && styles.colorChoiceSelected]}
+                      onPress={() => setCategoryColor(color)}
+                    />
+                  );
+                })}
+                <Pressable
+                  accessibilityLabel="Add custom category color"
+                  style={styles.customColorButton}
+                  onPress={() => setShowAddCustomColorInput((value) => !value)}>
+                  <Ionicons name="add" size={16} color={UI_COLORS.neutralText} />
+                </Pressable>
+              </ScrollView>
+              {showAddCustomColorInput ? (
+                <View style={styles.customColorRow}>
+                  <TextInput
+                    value={customAddColorInput}
+                    onChangeText={setCustomAddColorInput}
+                    style={styles.customColorInput}
+                    placeholder="#RRGGBB"
+                    autoCapitalize="characters"
+                    maxLength={7}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <Pressable style={styles.customColorApplyButton} onPress={applyAddCustomColor}>
+                    <Text style={styles.customColorApplyButtonText}>Use</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <Pressable
+                accessibilityLabel="Add category"
+                style={styles.addCategoryButton}
+                onPress={() => void addCategory()}>
+                <Text style={styles.addCategoryButtonText}>Add category</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline Actions</Text>
             <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
             <View style={styles.timelineActionList}>
@@ -733,70 +931,6 @@ export default function SettingsScreen() {
                 style={styles.timelineActionButton}
                 onPress={() => setCopyPlanFromDayVisible(true)}>
                 <Text style={styles.timelineActionButtonText}>Copy Plan from Day</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.sectionTitle}>Timeline Filter</Text>
-            <View style={styles.filterRow}>
-              {timelineTagFilterOptions.map((option) => {
-                const selected = (routeTagFilter ?? 'all') === option;
-                const label = option === 'all' ? 'All' : getCategoryLabel(option);
-
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityLabel={`Show ${label} blocks on timeline`}
-                    style={[styles.filterChip, selected && styles.filterChipSelected]}
-                    onPress={() => applyTimelineFilter(option)}>
-                    <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>{label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Categories</Text>
-            <View style={styles.listGroup}>
-              {settings.categories.map((category) => (
-                <Pressable
-                  key={category.id}
-                  style={[styles.listRow, styles.categoryRow]}
-                  onPress={() => openCategoryEditor(category.id)}
-                  accessibilityLabel={`Edit ${category.label} category`}>
-                  <View style={styles.categoryMain}>
-                    <View style={[styles.colorDot, { backgroundColor: category.color }]} />
-                    <Text style={styles.categoryName}>{category.label}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.addCategoryForm}>
-              <TextInput
-                value={categoryName}
-                onChangeText={setCategoryName}
-                style={styles.categoryInput}
-                placeholder="New category name"
-                placeholderTextColor="#94A3B8"
-              />
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.colorRow}>
-                {CATEGORY_COLORS.map((color) => {
-                  const selected = color === categoryColor;
-                  return (
-                    <Pressable
-                      key={`new-${color}`}
-                      accessibilityLabel={`Choose ${color} for new category`}
-                      style={[styles.colorChoice, { backgroundColor: color }, selected && styles.colorChoiceSelected]}
-                      onPress={() => setCategoryColor(color)}
-                    />
-                  );
-                })}
-              </ScrollView>
-              <Pressable
-                accessibilityLabel="Add category"
-                style={styles.addCategoryButton}
-                onPress={() => void addCategory()}>
-                <Text style={styles.addCategoryButtonText}>Add category</Text>
               </Pressable>
             </View>
           </View>
@@ -881,7 +1015,8 @@ export default function SettingsScreen() {
         <View style={styles.modalRoot}>
           <Pressable style={styles.backdrop} onPress={closeCategoryEditor} />
           <View style={styles.keyboardLift}>
-            <View style={styles.editorCard}>
+            <View style={styles.sheetCard}>
+              <View style={styles.sheetGrabber} />
               <View style={styles.sheetHeaderRow}>
                 <Text style={styles.sheetTitle}>Edit Category</Text>
                 <Pressable accessibilityLabel="Close category editor" style={styles.sheetCloseButton} onPress={closeCategoryEditor}>
@@ -900,7 +1035,7 @@ export default function SettingsScreen() {
 
               <Text style={styles.sectionTitle}>Color</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.colorRow}>
-                {CATEGORY_COLORS.map((color) => {
+                {editColorOptions.map((color) => {
                   const selected = color === editingCategoryColor;
                   return (
                     <Pressable
@@ -911,7 +1046,29 @@ export default function SettingsScreen() {
                     />
                   );
                 })}
+                <Pressable
+                  accessibilityLabel="Add custom category color"
+                  style={styles.customColorButton}
+                  onPress={() => setShowEditCustomColorInput((value) => !value)}>
+                  <Ionicons name="add" size={16} color={UI_COLORS.neutralText} />
+                </Pressable>
               </ScrollView>
+              {showEditCustomColorInput ? (
+                <View style={styles.customColorRow}>
+                  <TextInput
+                    value={customEditColorInput}
+                    onChangeText={setCustomEditColorInput}
+                    style={styles.customColorInput}
+                    placeholder="#RRGGBB"
+                    autoCapitalize="characters"
+                    maxLength={7}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <Pressable style={styles.customColorApplyButton} onPress={applyEditCustomColor}>
+                    <Text style={styles.customColorApplyButtonText}>Use</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
               <View style={styles.editorActions}>
                 <Pressable style={styles.editorSaveButton} disabled={saving} onPress={() => void saveCategoryEditor()}>
@@ -1164,6 +1321,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  categoryVisibilityToggle: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   categoryName: {
     color: UI_COLORS.neutralText,
     fontSize: 14,
@@ -1187,6 +1350,45 @@ const styles = StyleSheet.create({
   colorChoiceSelected: {
     borderColor: UI_COLORS.neutralText,
     borderWidth: 2,
+  },
+  customColorButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customColorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  customColorInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: UI_COLORS.neutralText,
+    backgroundColor: UI_COLORS.surface,
+  },
+  customColorApplyButton: {
+    borderRadius: UI_RADIUS.control,
+    backgroundColor: UI_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  customColorApplyButtonText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 12,
+    fontWeight: '600',
   },
   addCategoryForm: {
     marginTop: 4,
@@ -1269,31 +1471,6 @@ const styles = StyleSheet.create({
     color: UI_COLORS.neutralText,
     fontSize: 13,
     fontWeight: '600',
-  },
-  filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  filterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  filterChipSelected: {
-    backgroundColor: UI_COLORS.surfaceMuted,
-    borderColor: UI_COLORS.neutralText,
-  },
-  filterChipText: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  filterChipTextSelected: {
-    color: UI_COLORS.neutralText,
   },
   resetButton: {
     borderWidth: 1,

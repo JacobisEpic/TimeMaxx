@@ -20,7 +20,6 @@ import * as Haptics from 'expo-haptics';
 
 import { Block, PIXELS_PER_MINUTE } from '@/src/components/Block';
 import { BlockEditorModal } from '@/src/components/BlockEditorModal';
-import { TAG_CATALOG } from '@/src/constants/tags';
 import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryColor, getCategoryLabel } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { deleteBlock, getBlocksForDay, getBlocksForDayRange, insertBlock, updateBlock } from '@/src/storage/blocksDb';
@@ -28,7 +27,6 @@ import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
 import { clamp, formatHHMM, parseHHMM, roundTo15 } from '@/src/utils/time';
 
-type TagFilter = 'all' | (typeof TAG_CATALOG)[number];
 type ViewMode = 'compare' | 'planned' | 'actual';
 
 type EditorState = {
@@ -157,20 +155,6 @@ function parseDayKeyParam(input: string | string[] | undefined): string | null {
   return dayKeyToLocalDate(raw) ? raw : null;
 }
 
-function parseTagFilterParam(input: string | string[] | undefined): TagFilter | null {
-  const raw = Array.isArray(input) ? input[0] : input;
-  if (!raw) {
-    return null;
-  }
-
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === 'all') {
-    return 'all';
-  }
-
-  return (TAG_CATALOG as readonly string[]).includes(normalized) ? (normalized as TagFilter) : null;
-}
-
 function getMonthStart(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
@@ -265,12 +249,8 @@ function hasOverlap(
   });
 }
 
-function matchesTagFilter(block: TimeBlock, tagFilter: TagFilter): boolean {
-  if (tagFilter === 'all') {
-    return true;
-  }
-
-  return block.tags.map((tag) => tag.toLowerCase()).includes(tagFilter);
+function matchesVisibleCategoryIds(block: TimeBlock, visibleCategoryIds: Set<string>): boolean {
+  return block.tags.some((tag) => visibleCategoryIds.has(tag.trim().toLowerCase()));
 }
 
 function minutesToHM(minutes: number): string {
@@ -358,12 +338,10 @@ async function triggerSuccessHaptic(): Promise<void> {
 export default function DayTimeline() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { dayKey: dayKeyParam, tagFilter: tagFilterParam } = useLocalSearchParams<{
+  const { dayKey: dayKeyParam } = useLocalSearchParams<{
     dayKey?: string | string[];
-    tagFilter?: string | string[];
   }>();
   const routeDayKey = useMemo(() => parseDayKeyParam(dayKeyParam), [dayKeyParam]);
-  const routeTagFilter = useMemo(() => parseTagFilterParam(tagFilterParam), [tagFilterParam]);
   const { settings, loading: settingsLoading, dataVersion } = useAppSettings();
   const { height: windowHeight } = useWindowDimensions();
 
@@ -383,7 +361,6 @@ export default function DayTimeline() {
     planned: true,
     actual: false,
   });
-  const [tagFilter, setTagFilter] = useState<TagFilter>(() => routeTagFilter ?? 'all');
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [calendarScoreByDay, setCalendarScoreByDay] = useState<Record<string, number | null>>({});
@@ -485,6 +462,10 @@ export default function DayTimeline() {
     [plannedBlocks]
   );
   const categoryOptions = settings.categories;
+  const visibleCategoryIdSet = useMemo(
+    () => new Set(settings.visibleCategoryIds.map((id) => id.toLowerCase())),
+    [settings.visibleCategoryIds]
+  );
   const categoryColorMap = useMemo(
     () =>
       categoryOptions.reduce<Record<string, string>>((acc, category) => {
@@ -708,14 +689,6 @@ export default function DayTimeline() {
 
     setDayKey(routeDayKey);
   }, [routeDayKey]);
-
-  useEffect(() => {
-    if (!routeTagFilter) {
-      return;
-    }
-
-    setTagFilter(routeTagFilter);
-  }, [routeTagFilter]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -1538,7 +1511,7 @@ export default function DayTimeline() {
     const toRenderable = (lane: Lane) =>
       sortByStartMin(sortedBlocks.filter((block) => block.lane === lane))
         .map((block) => {
-        const matches = matchesTagFilter(block, tagFilter);
+        const matches = matchesVisibleCategoryIds(block, visibleCategoryIdSet);
 
         const dimForFocus = isFocusActive && !isHighlighted(block);
 
@@ -1553,7 +1526,7 @@ export default function DayTimeline() {
       planned: toRenderable('planned'),
       actual: toRenderable('actual'),
     };
-  }, [focusedPlannedId, sortedBlocks, tagFilter]);
+  }, [focusedPlannedId, sortedBlocks, visibleCategoryIdSet]);
 
   const hasAnyBlocks = sortedBlocks.length > 0;
   const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE;
@@ -1741,7 +1714,7 @@ export default function DayTimeline() {
             onPress={() =>
               router.push({
                 pathname: '/(tabs)/settings',
-                params: { dayKey, tagFilter },
+                params: { dayKey },
               })
             }>
             <Ionicons name="settings-outline" size={18} color={UI_COLORS.neutralText} />
