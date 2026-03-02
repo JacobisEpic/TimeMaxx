@@ -236,6 +236,8 @@ export default function SettingsScreen() {
   const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
   const [importSummaryVisible, setImportSummaryVisible] = useState(false);
   const [importSummaryText, setImportSummaryText] = useState('');
+  const [copyPlanFromDayVisible, setCopyPlanFromDayVisible] = useState(false);
+  const [copyPlanSourceDayKey, setCopyPlanSourceDayKey] = useState(() => shiftDayKey(timelineDayKey, -1));
   const [timelineBlocks, setTimelineBlocks] = useState<TimeBlock[]>([]);
 
   const activeLegalDoc = LEGAL_DOCUMENTS.find((document) => document.key === activeLegalDocKey) ?? null;
@@ -287,6 +289,12 @@ export default function SettingsScreen() {
       cancelled = true;
     };
   }, [dataVersion, timelineDayKey]);
+
+  useEffect(() => {
+    if (!copyPlanFromDayVisible) {
+      setCopyPlanSourceDayKey(shiftDayKey(timelineDayKey, -1));
+    }
+  }, [copyPlanFromDayVisible, timelineDayKey]);
 
   const addCategory = async () => {
     const label = categoryName.trim();
@@ -583,61 +591,26 @@ export default function SettingsScreen() {
     })();
   }, [importSummaryText, signalDataChanged, timelineDayKey]);
 
-  const copyPlanToDone = useCallback(() => {
-    void (async () => {
-      const planned = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'planned'));
-      const targetActual = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'actual'));
-      let created = 0;
-      let skipped = 0;
-
-      try {
-        for (const plannedBlock of planned) {
-          if (hasOverlap('actual', plannedBlock.startMin, plannedBlock.endMin, targetActual)) {
-            skipped += 1;
-            continue;
-          }
-
-          const inserted = await insertBlock(
-            {
-              lane: 'actual',
-              title: plannedBlock.title,
-              tags: [...plannedBlock.tags],
-              startMin: plannedBlock.startMin,
-              endMin: plannedBlock.endMin,
-            },
-            timelineDayKey
-          );
-
-          targetActual.push(inserted);
-          created += 1;
-        }
-
-        signalDataChanged();
-        Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
-      } catch {
-        signalDataChanged();
-        Alert.alert('Storage error', 'Could not finish copy plan to done.');
-      }
-    })();
-  }, [signalDataChanged, timelineBlocks, timelineDayKey]);
-
-  const isTimelineToday = timelineDayKey === getLocalDayKey();
-
-  const copyYesterdayPlanToToday = useCallback(() => {
-    if (!isTimelineToday) {
+  const copyPlanFromSpecificDay = useCallback(() => {
+    const sourceDayKey = copyPlanSourceDayKey.trim();
+    if (!dayKeyToLocalDate(sourceDayKey)) {
+      Alert.alert('Invalid date', 'Use YYYY-MM-DD format for source day.');
+      return;
+    }
+    if (sourceDayKey === timelineDayKey) {
+      Alert.alert('Choose another day', 'Source day must be different from the current day.');
       return;
     }
 
     void (async () => {
-      const yesterdayKey = shiftDayKey(timelineDayKey, -1);
       try {
-        const yesterdayBlocks = await getBlocksForDay(yesterdayKey);
-        const yesterdayPlanned = sortByStartMin(yesterdayBlocks.filter((block) => block.lane === 'planned'));
+        const sourceBlocks = await getBlocksForDay(sourceDayKey);
+        const sourcePlanned = sortByStartMin(sourceBlocks.filter((block) => block.lane === 'planned'));
         const targetPlanned = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'planned'));
         let created = 0;
         let skipped = 0;
 
-        for (const plannedBlock of yesterdayPlanned) {
+        for (const plannedBlock of sourcePlanned) {
           if (hasOverlap('planned', plannedBlock.startMin, plannedBlock.endMin, targetPlanned)) {
             skipped += 1;
             continue;
@@ -658,13 +631,14 @@ export default function SettingsScreen() {
         }
 
         signalDataChanged();
+        setCopyPlanFromDayVisible(false);
         Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
       } catch {
         signalDataChanged();
-        Alert.alert('Storage error', 'Could not copy yesterday plan blocks.');
+        Alert.alert('Storage error', 'Could not copy plan blocks from source day.');
       }
     })();
-  }, [isTimelineToday, signalDataChanged, timelineBlocks, timelineDayKey]);
+  }, [copyPlanSourceDayKey, signalDataChanged, timelineBlocks, timelineDayKey]);
 
   const applyTimelineFilter = (filter: TagFilter) => {
     router.replace({
@@ -738,6 +712,48 @@ export default function SettingsScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             onScrollBeginDrag={() => Keyboard.dismiss()}>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Timeline Actions</Text>
+            <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
+            <View style={styles.timelineActionList}>
+              <Pressable
+                accessibilityLabel="Share timeline summary"
+                style={styles.timelineActionButton}
+                onPress={shareTimelineSummary}>
+                <Text style={styles.timelineActionButtonText}>Share Summary</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Import timeline summary"
+                style={styles.timelineActionButton}
+                onPress={() => setImportSummaryVisible(true)}>
+                <Text style={styles.timelineActionButtonText}>Import Summary</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Copy plan blocks from another day"
+                style={styles.timelineActionButton}
+                onPress={() => setCopyPlanFromDayVisible(true)}>
+                <Text style={styles.timelineActionButtonText}>Copy Plan from Day</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.sectionTitle}>Timeline Filter</Text>
+            <View style={styles.filterRow}>
+              {timelineTagFilterOptions.map((option) => {
+                const selected = (routeTagFilter ?? 'all') === option;
+                const label = option === 'all' ? 'All' : getCategoryLabel(option);
+
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityLabel={`Show ${label} blocks on timeline`}
+                    style={[styles.filterChip, selected && styles.filterChipSelected]}
+                    onPress={() => applyTimelineFilter(option)}>
+                    <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Categories</Text>
             <View style={styles.listGroup}>
@@ -819,61 +835,6 @@ export default function SettingsScreen() {
                 </Pressable>
               </View>
             ) : null}
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Timeline Actions</Text>
-            <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
-            <View style={styles.timelineActionList}>
-              <Pressable
-                accessibilityLabel="Share timeline summary"
-                style={styles.timelineActionButton}
-                onPress={shareTimelineSummary}>
-                <Text style={styles.timelineActionButtonText}>Share Summary</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Import timeline summary"
-                style={styles.timelineActionButton}
-                onPress={() => setImportSummaryVisible(true)}>
-                <Text style={styles.timelineActionButtonText}>Import Summary</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Copy plan blocks into done lane"
-                style={styles.timelineActionButton}
-                onPress={copyPlanToDone}>
-                <Text style={styles.timelineActionButtonText}>Copy Plan to Done</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Copy yesterday plan blocks to today"
-                style={[styles.timelineActionButton, !isTimelineToday && styles.timelineActionButtonDisabled]}
-                onPress={copyYesterdayPlanToToday}
-                disabled={!isTimelineToday}>
-                <Text
-                  style={[
-                    styles.timelineActionButtonText,
-                    !isTimelineToday && styles.timelineActionButtonTextDisabled,
-                  ]}>
-                  Copy Yesterday Plan
-                </Text>
-              </Pressable>
-            </View>
-            <Text style={styles.sectionTitle}>Timeline Filter</Text>
-            <View style={styles.filterRow}>
-              {timelineTagFilterOptions.map((option) => {
-                const selected = (routeTagFilter ?? 'all') === option;
-                const label = option === 'all' ? 'All' : getCategoryLabel(option);
-
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityLabel={`Show ${label} blocks on timeline`}
-                    style={[styles.filterChip, selected && styles.filterChipSelected]}
-                    onPress={() => applyTimelineFilter(option)}>
-                    <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>{label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
           </View>
 
           <View style={styles.section}>
@@ -1056,6 +1017,48 @@ export default function SettingsScreen() {
                   disabled={saving}
                   onPress={importTimelineSummary}>
                   <Text style={styles.editorSaveButtonText}>Import</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={copyPlanFromDayVisible}
+        onRequestClose={() => setCopyPlanFromDayVisible(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setCopyPlanFromDayVisible(false)} />
+          <View style={styles.keyboardLift}>
+            <View style={styles.editorCard}>
+              <View style={styles.sheetHeaderRow}>
+                <Text style={styles.sheetTitle}>Copy Plan from Day</Text>
+                <Pressable
+                  accessibilityLabel="Close copy plan dialog"
+                  style={styles.sheetCloseButton}
+                  onPress={() => setCopyPlanFromDayVisible(false)}>
+                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                </Pressable>
+              </View>
+              <Text style={styles.toggleHint}>Source day (YYYY-MM-DD)</Text>
+              <TextInput
+                value={copyPlanSourceDayKey}
+                onChangeText={setCopyPlanSourceDayKey}
+                style={styles.copySourceInput}
+                placeholder="2026-03-01"
+                placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Text style={styles.toggleHint}>Target day: {timelineDateLabel}</Text>
+              <View style={styles.editorActions}>
+                <Pressable style={styles.editorDeleteButton} onPress={() => setCopyPlanFromDayVisible(false)}>
+                  <Text style={styles.editorDeleteButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.editorSaveButton} disabled={saving} onPress={copyPlanFromSpecificDay}>
+                  <Text style={styles.editorSaveButtonText}>Copy Plan</Text>
                 </Pressable>
               </View>
             </View>
@@ -1262,17 +1265,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  timelineActionButtonDisabled: {
-    backgroundColor: UI_COLORS.surfaceMuted,
-    opacity: 0.7,
-  },
   timelineActionButtonText: {
     color: UI_COLORS.neutralText,
     fontSize: 13,
     fontWeight: '600',
-  },
-  timelineActionButtonTextDisabled: {
-    color: UI_COLORS.neutralTextSoft,
   },
   filterRow: {
     flexDirection: 'row',
@@ -1359,6 +1355,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 10,
     fontSize: 13,
+    color: UI_COLORS.neutralText,
+    backgroundColor: UI_COLORS.surface,
+  },
+  copySourceInput: {
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 14,
     color: UI_COLORS.neutralText,
     backgroundColor: UI_COLORS.surface,
   },
