@@ -19,7 +19,7 @@ Last updated: February 26, 2026
 - COMPLETE: Legal pages are linked in-app via Settings -> Legal & Support.
 - MANUAL: Add Privacy Policy public URL in App Store Connect.
 - COMPLETE: Support page exists in [legal/support.md](/Users/jacob/Development/plan-vs-actual/legal/support.md).
-- COMPLETE: Support email is configured to `support@planvsactual.app` in app and legal docs.
+- COMPLETE: Support email is configured to `jacobchin.builds@gmail.com` in app and legal docs.
 - COMPLETE: Privacy policy describes data collection, storage, and deletion.
 
 ## 3) Business setup

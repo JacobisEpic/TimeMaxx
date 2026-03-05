@@ -24,4 +24,4 @@ Plan vs Actual is a local-first productivity app for tracking planned and comple
 - The app is not directed to children under 13.
 
 ## Contact
-- Email: support@planvsactual.app
+- Email: jacobchin.builds@gmail.com

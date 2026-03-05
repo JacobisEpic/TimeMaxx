@@ -24,4 +24,4 @@ To the maximum extent permitted by law, we are not liable for indirect, incident
 We may update these terms over time. Material updates will be reflected by changing the date above.
 
 ## Contact
-- Email: support@planvsactual.app
+- Email: jacobchin.builds@gmail.com

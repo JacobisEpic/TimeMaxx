@@ -50,6 +50,17 @@ const CATEGORY_COLORS = [
   '#94A3B8',
 ];
 const SHEET_VISIBLE_HEIGHT = '86%';
+const CALENDAR_WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+type CalendarDayCell = {
+  key: string;
+  dayKey: string | null;
+  date: Date | null;
+  inCurrentMonth: boolean;
+};
+
+type CopyPlanCalendarFocus = 'source' | 'target';
+
 type ParsedSummaryBlock = {
   lane: Lane;
   title: string;
@@ -223,6 +234,40 @@ function normalizeHexColor(input: string): string | null {
   return normalized;
 }
 
+function getMonthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getDaysInMonth(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function shiftMonth(monthStart: Date, delta: number): Date {
+  return new Date(monthStart.getFullYear(), monthStart.getMonth() + delta, 1);
+}
+
+function buildCalendarDayCells(monthStart: Date): CalendarDayCell[] {
+  const start = getMonthStart(monthStart);
+  const firstWeekday = start.getDay();
+  const dayCount = getDaysInMonth(start);
+  const totalCells = Math.ceil((firstWeekday + dayCount) / 7) * 7;
+  const cells: CalendarDayCell[] = [];
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayOfMonth = i - firstWeekday + 1;
+    const inCurrentMonth = dayOfMonth >= 1 && dayOfMonth <= dayCount;
+    const date = inCurrentMonth ? new Date(start.getFullYear(), start.getMonth(), dayOfMonth) : null;
+    cells.push({
+      key: `${start.getFullYear()}-${start.getMonth() + 1}-${i}`,
+      dayKey: date ? getLocalDayKey(date) : null,
+      date,
+      inCurrentMonth,
+    });
+  }
+
+  return cells;
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { dayKey: dayKeyParam } = useLocalSearchParams<{
@@ -246,7 +291,13 @@ export default function SettingsScreen() {
   const [importSummaryVisible, setImportSummaryVisible] = useState(false);
   const [importSummaryText, setImportSummaryText] = useState('');
   const [copyPlanFromDayVisible, setCopyPlanFromDayVisible] = useState(false);
+  const [copyPlanTargetDayKey, setCopyPlanTargetDayKey] = useState(timelineDayKey);
   const [copyPlanSourceDayKey, setCopyPlanSourceDayKey] = useState(() => shiftDayKey(timelineDayKey, -1));
+  const [copyPlanCalendarFocus, setCopyPlanCalendarFocus] = useState<CopyPlanCalendarFocus>('source');
+  const [copyPlanCalendarMonthStart, setCopyPlanCalendarMonthStart] = useState(() => {
+    const initialSourceDate = dayKeyToLocalDate(shiftDayKey(timelineDayKey, -1)) ?? new Date();
+    return getMonthStart(initialSourceDate);
+  });
   const [timelineBlocks, setTimelineBlocks] = useState<TimeBlock[]>([]);
 
   const activeLegalDoc = LEGAL_DOCUMENTS.find((document) => document.key === activeLegalDocKey) ?? null;
@@ -263,6 +314,45 @@ export default function SettingsScreen() {
       year: 'numeric',
     }).format(date);
   }, [timelineDayKey]);
+  const todayDayKey = getLocalDayKey();
+  const copySourceDateLabel = useMemo(() => {
+    const sourceDate = dayKeyToLocalDate(copyPlanSourceDayKey);
+    if (!sourceDate) {
+      return copyPlanSourceDayKey;
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(sourceDate);
+  }, [copyPlanSourceDayKey]);
+  const copyTargetDateLabel = useMemo(() => {
+    const targetDate = dayKeyToLocalDate(copyPlanTargetDayKey);
+    if (!targetDate) {
+      return copyPlanTargetDayKey;
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(targetDate);
+  }, [copyPlanTargetDayKey]);
+  const copyCalendarMonthLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+      }).format(copyPlanCalendarMonthStart),
+    [copyPlanCalendarMonthStart]
+  );
+  const copyPlanCalendarCells = useMemo(
+    () => buildCalendarDayCells(copyPlanCalendarMonthStart),
+    [copyPlanCalendarMonthStart]
+  );
   const timelineTagTotals = useMemo(
     () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromMetrics(block))),
     [timelineBlocks]
@@ -326,7 +416,15 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (!copyPlanFromDayVisible) {
-      setCopyPlanSourceDayKey(shiftDayKey(timelineDayKey, -1));
+      const fallbackTargetDayKey = timelineDayKey;
+      const fallbackSourceDayKey = shiftDayKey(timelineDayKey, -1);
+      const fallbackSourceDate = dayKeyToLocalDate(fallbackSourceDayKey);
+      setCopyPlanTargetDayKey(fallbackTargetDayKey);
+      setCopyPlanSourceDayKey(fallbackSourceDayKey);
+      setCopyPlanCalendarFocus('source');
+      if (fallbackSourceDate) {
+        setCopyPlanCalendarMonthStart(getMonthStart(fallbackSourceDate));
+      }
     }
   }, [copyPlanFromDayVisible, timelineDayKey]);
 
@@ -718,22 +816,76 @@ export default function SettingsScreen() {
     })();
   }, [importSummaryText, signalDataChanged, timelineDayKey]);
 
+  const openCopyPlanFromPastDay = useCallback(() => {
+    const fallbackTargetDayKey = timelineDayKey;
+    const fallbackSourceDayKey = shiftDayKey(timelineDayKey, -1);
+    const fallbackSourceDate = dayKeyToLocalDate(fallbackSourceDayKey);
+    setCopyPlanTargetDayKey(fallbackTargetDayKey);
+    setCopyPlanSourceDayKey(fallbackSourceDayKey);
+    setCopyPlanCalendarFocus('source');
+    if (fallbackSourceDate) {
+      setCopyPlanCalendarMonthStart(getMonthStart(fallbackSourceDate));
+    }
+    setCopyPlanFromDayVisible(true);
+  }, [timelineDayKey]);
+
+  const focusCopyPlanCalendarField = useCallback(
+    (field: CopyPlanCalendarFocus) => {
+      setCopyPlanCalendarFocus(field);
+      const focusDate = dayKeyToLocalDate(field === 'source' ? copyPlanSourceDayKey : copyPlanTargetDayKey);
+      if (focusDate) {
+        setCopyPlanCalendarMonthStart(getMonthStart(focusDate));
+      }
+    },
+    [copyPlanSourceDayKey, copyPlanTargetDayKey]
+  );
+
+  const handleCopyPlanCalendarSelectDay = useCallback(
+    (selectedDayKey: string) => {
+      if (copyPlanCalendarFocus === 'source') {
+        setCopyPlanSourceDayKey(selectedDayKey);
+        if (selectedDayKey >= copyPlanTargetDayKey) {
+          setCopyPlanTargetDayKey(shiftDayKey(selectedDayKey, 1));
+        }
+        return;
+      }
+
+      setCopyPlanTargetDayKey(selectedDayKey);
+      if (selectedDayKey <= copyPlanSourceDayKey) {
+        setCopyPlanSourceDayKey(shiftDayKey(selectedDayKey, -1));
+      }
+    },
+    [copyPlanCalendarFocus, copyPlanSourceDayKey, copyPlanTargetDayKey]
+  );
+
   const copyPlanFromSpecificDay = useCallback(() => {
     const sourceDayKey = copyPlanSourceDayKey.trim();
+    const targetDayKey = copyPlanTargetDayKey.trim();
     if (!dayKeyToLocalDate(sourceDayKey)) {
-      Alert.alert('Invalid date', 'Use YYYY-MM-DD format for source day.');
+      Alert.alert('Invalid date', 'Select a valid source day.');
       return;
     }
-    if (sourceDayKey === timelineDayKey) {
-      Alert.alert('Choose another day', 'Source day must be different from the current day.');
+    if (!dayKeyToLocalDate(targetDayKey)) {
+      Alert.alert('Invalid date', 'Select a valid target day.');
+      return;
+    }
+    if (sourceDayKey >= targetDayKey) {
+      Alert.alert('Choose a past day', 'Source day must be before the target day.');
       return;
     }
 
     void (async () => {
       try {
-        const sourceBlocks = await getBlocksForDay(sourceDayKey);
+        const [sourceBlocks, targetBlocks] = await Promise.all([
+          getBlocksForDay(sourceDayKey),
+          getBlocksForDay(targetDayKey),
+        ]);
         const sourcePlanned = sortByStartMin(sourceBlocks.filter((block) => block.lane === 'planned'));
-        const targetPlanned = sortByStartMin(timelineBlocks.filter((block) => block.lane === 'planned'));
+        if (sourcePlanned.length === 0) {
+          Alert.alert('Nothing to copy', 'No plan blocks found on the selected source day.');
+          return;
+        }
+        const targetPlanned = sortByStartMin(targetBlocks.filter((block) => block.lane === 'planned'));
         let created = 0;
         let skipped = 0;
 
@@ -751,7 +903,7 @@ export default function SettingsScreen() {
               startMin: plannedBlock.startMin,
               endMin: plannedBlock.endMin,
             },
-            timelineDayKey
+            targetDayKey
           );
           targetPlanned.push(inserted);
           created += 1;
@@ -759,13 +911,18 @@ export default function SettingsScreen() {
 
         signalDataChanged();
         setCopyPlanFromDayVisible(false);
+        if (created === 0) {
+          Alert.alert('Nothing copied', `All ${skipped} source blocks overlap existing plan blocks.`);
+          return;
+        }
+
         Alert.alert('Copy complete', `Created ${created}, skipped ${skipped}.`);
       } catch {
         signalDataChanged();
         Alert.alert('Storage error', 'Could not copy plan blocks from source day.');
       }
     })();
-  }, [copyPlanSourceDayKey, signalDataChanged, timelineBlocks, timelineDayKey]);
+  }, [copyPlanSourceDayKey, copyPlanTargetDayKey, signalDataChanged]);
 
   const openSupportEmail = () => {
     void (async () => {
@@ -927,10 +1084,10 @@ export default function SettingsScreen() {
                 <Text style={styles.timelineActionButtonText}>Import Summary</Text>
               </Pressable>
               <Pressable
-                accessibilityLabel="Copy plan blocks from another day"
+                accessibilityLabel="Copy plan blocks from a past day"
                 style={styles.timelineActionButton}
-                onPress={() => setCopyPlanFromDayVisible(true)}>
-                <Text style={styles.timelineActionButtonText}>Copy Plan from Day</Text>
+                onPress={openCopyPlanFromPastDay}>
+                <Text style={styles.timelineActionButtonText}>Copy Plan from Past Day</Text>
               </Pressable>
             </View>
           </View>
@@ -1189,9 +1346,10 @@ export default function SettingsScreen() {
         <View style={styles.modalRoot}>
           <Pressable style={styles.backdrop} onPress={() => setCopyPlanFromDayVisible(false)} />
           <View style={styles.keyboardLift}>
-            <View style={styles.editorCard}>
+            <View style={styles.sheetCard}>
+              <View style={styles.sheetGrabber} />
               <View style={styles.sheetHeaderRow}>
-                <Text style={styles.sheetTitle}>Copy Plan from Day</Text>
+                <Text style={styles.sheetTitle}>Copy Plan from Past Day</Text>
                 <Pressable
                   accessibilityLabel="Close copy plan dialog"
                   style={styles.sheetCloseButton}
@@ -1199,21 +1357,99 @@ export default function SettingsScreen() {
                   <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
                 </Pressable>
               </View>
-              <Text style={styles.toggleHint}>Source day (YYYY-MM-DD)</Text>
-              <TextInput
-                value={copyPlanSourceDayKey}
-                onChangeText={setCopyPlanSourceDayKey}
-                style={styles.copySourceInput}
-                placeholder="2026-03-01"
-                placeholderTextColor="#94A3B8"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <Text style={styles.toggleHint}>Target day: {timelineDateLabel}</Text>
-              <View style={styles.editorActions}>
-                <Pressable style={styles.editorDeleteButton} onPress={() => setCopyPlanFromDayVisible(false)}>
-                  <Text style={styles.editorDeleteButtonText}>Cancel</Text>
+              <Text style={[styles.toggleHint, styles.copyPlanHint]}>Pick source and target days, then copy.</Text>
+              <View style={styles.copyPlanFieldRow}>
+                <Pressable
+                  accessibilityLabel="Edit source day"
+                  style={[
+                    styles.copyPlanFieldCard,
+                    copyPlanCalendarFocus === 'source' && styles.copyPlanFieldCardActive,
+                  ]}
+                  onPress={() => focusCopyPlanCalendarField('source')}>
+                  <Text style={styles.copyPlanFieldLabel}>Source day</Text>
+                  <Text style={styles.copyPlanFieldValue}>{copySourceDateLabel}</Text>
                 </Pressable>
+                <Pressable
+                  accessibilityLabel="Edit target day"
+                  style={[
+                    styles.copyPlanFieldCard,
+                    copyPlanCalendarFocus === 'target' && styles.copyPlanFieldCardActive,
+                  ]}
+                  onPress={() => focusCopyPlanCalendarField('target')}>
+                  <Text style={styles.copyPlanFieldLabel}>Target day</Text>
+                  <Text style={styles.copyPlanFieldValue}>{copyTargetDateLabel}</Text>
+                </Pressable>
+              </View>
+              <View style={styles.copyPlanCalendarCard}>
+                <View style={styles.copyPlanMonthRow}>
+                  <Pressable
+                    accessibilityLabel="Show previous month"
+                    style={styles.copyPlanMonthButton}
+                    onPress={() => setCopyPlanCalendarMonthStart((current) => shiftMonth(current, -1))}>
+                    <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+                  </Pressable>
+                  <Text style={styles.copyPlanMonthLabel}>{copyCalendarMonthLabel}</Text>
+                  <Pressable
+                    accessibilityLabel="Show next month"
+                    style={styles.copyPlanMonthButton}
+                    onPress={() => setCopyPlanCalendarMonthStart((current) => shiftMonth(current, 1))}>
+                    <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+                  </Pressable>
+                </View>
+                <View style={styles.copyPlanWeekdayRow}>
+                  {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
+                    <Text key={`copy-day-${index}`} style={styles.copyPlanWeekdayText}>
+                      {label}
+                    </Text>
+                  ))}
+                </View>
+                <View style={styles.copyPlanGrid}>
+                  {copyPlanCalendarCells.map((cell) => {
+                    const cellDayKey = cell.dayKey;
+                    const inCurrentMonth = cell.inCurrentMonth;
+                    const selectable = inCurrentMonth && !!cellDayKey;
+                    const sourceSelected = !!cellDayKey && cellDayKey === copyPlanSourceDayKey;
+                    const targetSelected = !!cellDayKey && cellDayKey === copyPlanTargetDayKey;
+                    const isToday = !!cellDayKey && cellDayKey === todayDayKey;
+
+                    return (
+                      <Pressable
+                        key={cell.key}
+                        accessibilityLabel={
+                          cellDayKey
+                            ? `Use ${cellDayKey} as ${copyPlanCalendarFocus === 'source' ? 'source' : 'target'} day`
+                            : 'Calendar day'
+                        }
+                        disabled={!selectable}
+                        onPress={() => {
+                          if (cellDayKey && selectable) {
+                            handleCopyPlanCalendarSelectDay(cellDayKey);
+                          }
+                        }}
+                        style={styles.copyPlanDayCell}>
+                        {isToday ? <View style={styles.copyPlanTodayCircle} /> : null}
+                        <View
+                          style={[
+                            styles.copyPlanDayNumber,
+                            sourceSelected && styles.copyPlanDayNumberSourceSelected,
+                            targetSelected && styles.copyPlanDayNumberTargetSelected,
+                          ]}>
+                          <Text
+                            style={[
+                              styles.copyPlanDayText,
+                              !inCurrentMonth && styles.copyPlanDayTextOutsideMonth,
+                              !selectable && styles.copyPlanDayTextDisabled,
+                            ]}>
+                            {cell.date?.getDate() ?? ''}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              <Text style={styles.toggleHint}>Source must be before target.</Text>
+              <View style={styles.editorActions}>
                 <Pressable style={styles.editorSaveButton} disabled={saving} onPress={copyPlanFromSpecificDay}>
                   <Text style={styles.editorSaveButtonText}>Copy Plan</Text>
                 </Pressable>
@@ -1535,15 +1771,123 @@ const styles = StyleSheet.create({
     color: UI_COLORS.neutralText,
     backgroundColor: UI_COLORS.surface,
   },
-  copySourceInput: {
+  copyPlanCalendarCard: {
+    borderWidth: 1,
+    borderColor: '#D4DDE8',
+    borderRadius: UI_RADIUS.card,
+    backgroundColor: '#F8FBFF',
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  copyPlanHint: {
+    marginBottom: 10,
+  },
+  copyPlanFieldRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  copyPlanFieldCard: {
+    flex: 1,
     borderWidth: 1,
     borderColor: UI_COLORS.neutralBorder,
-    borderRadius: UI_RADIUS.control,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: UI_COLORS.neutralText,
+    borderRadius: UI_RADIUS.card,
     backgroundColor: UI_COLORS.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  copyPlanFieldCardActive: {
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+  },
+  copyPlanFieldLabel: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  copyPlanFieldValue: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  copyPlanMonthRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  copyPlanMonthButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  copyPlanMonthLabel: {
+    color: UI_COLORS.neutralText,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  copyPlanWeekdayRow: {
+    flexDirection: 'row',
+  },
+  copyPlanWeekdayText: {
+    flex: 1,
+    textAlign: 'center',
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  copyPlanGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  copyPlanDayCell: {
+    width: '14.2857%',
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  copyPlanDayNumber: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  copyPlanDayNumberSourceSelected: {
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  copyPlanDayNumberTargetSelected: {
+    borderWidth: 2,
+    borderColor: '#2563EB',
+  },
+  copyPlanDayText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  copyPlanDayTextOutsideMonth: {
+    color: '#C2CBD6',
+  },
+  copyPlanDayTextDisabled: {
+    color: UI_COLORS.neutralTextSoft,
+  },
+  copyPlanTodayCircle: {
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#FF3B30',
   },
   editorCard: {
     marginHorizontal: 16,

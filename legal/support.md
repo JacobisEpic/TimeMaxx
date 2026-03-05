@@ -3,7 +3,7 @@
 Last updated: February 25, 2026
 
 ## Contact
-- Email: support@planvsactual.app
+- Email: jacobchin.builds@gmail.com
 
 ## What to include in bug reports
 - App version
