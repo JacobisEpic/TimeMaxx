@@ -1528,7 +1528,6 @@ export default function DayTimeline() {
     };
   }, [focusedPlannedId, sortedBlocks, visibleCategoryIdSet]);
 
-  const hasAnyBlocks = sortedBlocks.length > 0;
   const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE;
   const nowTimeLabel = formatCurrentTimeLabel(nowMinute);
   const timelineCanvasHeight = TIMELINE_HEIGHT + insets.bottom;
@@ -1786,19 +1785,6 @@ export default function DayTimeline() {
               })}
             </View>
           </View>
-
-          {!hasAnyBlocks ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateBody}>Tap empty time to create your first event.</Text>
-              <Pressable
-                accessibilityLabel="Add first block"
-                accessibilityRole="button"
-                style={styles.emptyStateButton}
-                onPress={() => openCreateEditor(selectedLane)}>
-                <Text style={styles.emptyStateButtonText}>Add first block</Text>
-              </Pressable>
-            </View>
-          ) : null}
 
           <View style={styles.headerRow}>
             <View style={styles.timeHeader} />
@@ -2319,36 +2305,6 @@ const styles = StyleSheet.create({
     color: UI_COLORS.neutralTextSoft,
     textAlign: 'center',
     zIndex: 10,
-  },
-  emptyState: {
-    paddingVertical: 8,
-    marginBottom: 4,
-    gap: 4,
-    alignItems: 'center',
-  },
-  emptyStateTitle: {
-    fontSize: 15,
-    color: UI_COLORS.neutralText,
-    fontWeight: '600',
-  },
-  emptyStateBody: {
-    fontSize: 13,
-    color: UI_COLORS.neutralTextSoft,
-  },
-  emptyStateButton: {
-    marginTop: 4,
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    backgroundColor: UI_COLORS.glassSurfaceStrong,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  emptyStateButtonText: {
-    color: UI_COLORS.neutralText,
-    fontWeight: '600',
-    fontSize: 12,
   },
   headerRow: {
     flexDirection: 'row',
