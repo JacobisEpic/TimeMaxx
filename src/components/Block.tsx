@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 
 import { UI_COLORS, getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
@@ -10,6 +11,7 @@ export const PIXELS_PER_MINUTE = 1;
 
 const MINUTES_PER_DAY = 24 * 60;
 const SNAP_INTERVAL_MINUTES = 15;
+const CHECKBOX_HIT_SIZE = 24;
 
 function formatAmPm(min: number): string {
   const rounded = Math.max(0, Math.min(MINUTES_PER_DAY, Math.round(min)));
@@ -39,6 +41,9 @@ type BlockProps = {
   onDragPreview?: (id: string, previewStartMin: number, previewEndMin: number) => void;
   onFocusStart?: (id: string) => void;
   onFocusEnd?: (id: string) => void;
+  showCopyCheckbox?: boolean;
+  copyCheckboxChecked?: boolean;
+  onCopyCheckboxPress?: (id: string) => void;
   categoryColorMap?: Record<string, string>;
   interactive?: boolean;
   dimmed?: boolean;
@@ -61,6 +66,9 @@ export function Block({
   onDragPreview,
   onFocusStart,
   onFocusEnd,
+  showCopyCheckbox = false,
+  copyCheckboxChecked = false,
+  onCopyCheckboxPress,
   categoryColorMap,
   interactive = true,
   dimmed = false,
@@ -130,8 +138,12 @@ export function Block({
 
   const tapGesture = Gesture.Tap()
     .enabled(interactive)
-    .onEnd((_event, success) => {
+    .onEnd((event, success) => {
       if (success) {
+        if (showCopyCheckbox && onCopyCheckboxPress && event.x <= CHECKBOX_HIT_SIZE && event.y <= CHECKBOX_HIT_SIZE) {
+          runOnJS(onCopyCheckboxPress)(id);
+          return;
+        }
         runOnJS(onPress)(id);
       }
     });
@@ -167,6 +179,7 @@ export function Block({
       accessibilityLabel={`${lane} block ${title}`}
       style={[
         styles.block,
+        showCopyCheckbox && styles.blockWithCheckbox,
         animatedStyle,
         {
           height,
@@ -175,6 +188,15 @@ export function Block({
         },
       ]}>
       <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
+      {showCopyCheckbox ? (
+        <Animated.View style={styles.checkboxWrap}>
+          <Ionicons
+            name={copyCheckboxChecked ? 'checkmark-circle' : 'ellipse-outline'}
+            size={16}
+            color={copyCheckboxChecked ? UI_COLORS.actual : UI_COLORS.neutralTextSoft}
+          />
+        </Animated.View>
+      ) : null}
       <Text numberOfLines={1} style={styles.title}>
         {title}
       </Text>
@@ -205,6 +227,18 @@ const styles = StyleSheet.create({
     paddingRight: 8,
     paddingVertical: 6,
     overflow: 'hidden',
+  },
+  blockWithCheckbox: {
+    paddingLeft: 28,
+  },
+  checkboxWrap: {
+    position: 'absolute',
+    top: 5,
+    left: 8,
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   spine: {
     position: 'absolute',

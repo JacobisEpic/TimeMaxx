@@ -6,6 +6,7 @@ Local-first timeline tracking app built with Expo and React Native.
 - Create planned and completed time blocks on a day timeline.
 - Categorize blocks and customize category colors.
 - Link completed blocks to planned blocks for fulfillment tracking.
+- Mark planned blocks complete with an inline checkbox to auto-copy/link into Done.
 - Store all core data locally on-device (SQLite).
 - Share daily summaries from the app.
 

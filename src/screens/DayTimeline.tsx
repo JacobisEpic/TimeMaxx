@@ -249,6 +249,39 @@ function hasOverlap(
   });
 }
 
+function findFirstAvailableStartMinAtOrAfter(
+  laneBlocks: TimeBlock[],
+  durationMin: number,
+  minStartMin: number
+): number | null {
+  if (durationMin <= 0 || durationMin > MINUTES_PER_DAY) {
+    return null;
+  }
+
+  const latestAllowedStart = MINUTES_PER_DAY - durationMin;
+  const safeMinStart = clamp(minStartMin, 0, latestAllowedStart);
+  const sortedLaneBlocks = sortByStartMin(laneBlocks);
+  let cursor = safeMinStart;
+
+  for (const block of sortedLaneBlocks) {
+    if (block.endMin <= cursor) {
+      continue;
+    }
+
+    if (cursor + durationMin <= block.startMin) {
+      return cursor;
+    }
+
+    cursor = Math.max(cursor, block.endMin);
+
+    if (cursor > latestAllowedStart) {
+      return null;
+    }
+  }
+
+  return cursor + durationMin <= MINUTES_PER_DAY ? cursor : null;
+}
+
 function matchesVisibleCategoryIds(block: TimeBlock, visibleCategoryIds: Set<string>): boolean {
   return block.tags.some((tag) => visibleCategoryIds.has(tag.trim().toLowerCase()));
 }
@@ -372,6 +405,7 @@ export default function DayTimeline() {
   const draftCreateRef = useRef<DraftCreateState | null>(null);
   const createHapticKeyRef = useRef<string | null>(null);
   const draftCandidateRef = useRef<DraftCandidate | null>(null);
+  const planCheckboxMutationInFlightRef = useRef(new Set<string>());
   const finalizeHandledRef = useRef(false);
   const createGestureBlockedRef = useRef(false);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -436,6 +470,18 @@ export default function DayTimeline() {
   const sortedBlocks = useMemo(() => sortByStartMin(blocks), [blocks]);
   const plannedBlocks = useMemo(
     () => sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned')),
+    [sortedBlocks]
+  );
+  const copiedPlannedIdSet = useMemo(
+    () => {
+      const linkedIds = sortedBlocks.reduce<string[]>((acc, block) => {
+        if (block.lane === 'actual' && block.linkedPlannedId) {
+          acc.push(block.linkedPlannedId);
+        }
+        return acc;
+      }, []);
+      return new Set(linkedIds);
+    },
     [sortedBlocks]
   );
   const metricBlocks = useMemo(
@@ -1049,54 +1095,133 @@ export default function DayTimeline() {
     ]);
   }, [closeEditor, editorState.blockId, editorState.mode]);
 
+  const copyPlannedBlockToDone = useCallback(
+    (plannedBlockId: string, options?: { closeEditorOnSuccess?: boolean }) => {
+      if (planCheckboxMutationInFlightRef.current.has(plannedBlockId)) {
+        showFeedback('Updating block...');
+        return;
+      }
+
+      const plannedBlock = sortedBlocks.find(
+        (block) => block.id === plannedBlockId && block.lane === 'planned'
+      );
+
+      if (!plannedBlock) {
+        showFeedback('Plan block not found.');
+        return;
+      }
+
+      if (copiedPlannedIdSet.has(plannedBlock.id)) {
+        showFeedback('Already in Done.');
+        return;
+      }
+
+      const durationMin = plannedBlock.endMin - plannedBlock.startMin;
+      if (durationMin <= 0) {
+        showFeedback('Invalid block time.');
+        return;
+      }
+
+      const actualBlocks = sortedBlocks.filter((block) => block.lane === 'actual');
+      const targetStartMin =
+        actualBlocks.length === 0
+          ? plannedBlock.startMin
+          : findFirstAvailableStartMinAtOrAfter(actualBlocks, durationMin, plannedBlock.startMin);
+
+      if (targetStartMin === null) {
+        showFeedback('No room in Done.');
+        return;
+      }
+
+      const targetEndMin = targetStartMin + durationMin;
+
+      planCheckboxMutationInFlightRef.current.add(plannedBlockId);
+      void (async () => {
+        try {
+          const insertedBlock = await insertBlock(
+            {
+              lane: 'actual',
+              title: plannedBlock.title,
+              tags: [...plannedBlock.tags],
+              startMin: targetStartMin,
+              endMin: targetEndMin,
+              linkedPlannedId: plannedBlock.id,
+            },
+            dayKey
+          );
+          setBlocks((current) => sortByStartMin([...current, insertedBlock]));
+          void triggerSuccessHaptic();
+          if (options?.closeEditorOnSuccess) {
+            closeEditor();
+          }
+        } catch {
+          Alert.alert('Storage error', 'Could not copy block to done.');
+        } finally {
+          planCheckboxMutationInFlightRef.current.delete(plannedBlockId);
+        }
+      })();
+    },
+    [closeEditor, copiedPlannedIdSet, dayKey, showFeedback, sortedBlocks]
+  );
+
+  const removePlannedBlockFromDone = useCallback(
+    (plannedBlockId: string) => {
+      if (planCheckboxMutationInFlightRef.current.has(plannedBlockId)) {
+        showFeedback('Updating block...');
+        return;
+      }
+
+      const linkedActualBlocks = sortedBlocks.filter(
+        (block) => block.lane === 'actual' && block.linkedPlannedId === plannedBlockId
+      );
+
+      if (linkedActualBlocks.length === 0) {
+        showFeedback('Not in Done.');
+        return;
+      }
+
+      planCheckboxMutationInFlightRef.current.add(plannedBlockId);
+      void (async () => {
+        try {
+          await Promise.all(linkedActualBlocks.map((block) => deleteBlock(block.id)));
+          setBlocks((current) =>
+            sortByStartMin(
+              current.filter(
+                (block) => !(block.lane === 'actual' && block.linkedPlannedId === plannedBlockId)
+              )
+            )
+          );
+          void triggerSuccessHaptic();
+          showFeedback('Removed from Done.');
+        } catch {
+          Alert.alert('Storage error', 'Could not remove block from done.');
+        } finally {
+          planCheckboxMutationInFlightRef.current.delete(plannedBlockId);
+        }
+      })();
+    },
+    [showFeedback, sortedBlocks]
+  );
+
   const handleCopyPlannedToDoneFromEditor = useCallback(() => {
     if (editorState.mode !== 'edit' || editorState.lane !== 'planned' || !editorState.blockId) {
       return;
     }
 
-    const plannedBlock = sortedBlocks.find(
-      (block) => block.id === editorState.blockId && block.lane === 'planned'
-    );
+    copyPlannedBlockToDone(editorState.blockId, { closeEditorOnSuccess: true });
+  }, [copyPlannedBlockToDone, editorState.blockId, editorState.lane, editorState.mode]);
 
-    if (!plannedBlock) {
-      Alert.alert('Block not found', 'Could not find the selected plan block.');
-      return;
-    }
-
-    const alreadyLinked = sortedBlocks.some(
-      (block) => block.lane === 'actual' && block.linkedPlannedId === plannedBlock.id
-    );
-    if (alreadyLinked) {
-      Alert.alert('Already copied', 'This plan block is already linked to a done block.');
-      return;
-    }
-
-    if (hasOverlap('actual', null, plannedBlock.startMin, plannedBlock.endMin, sortedBlocks)) {
-      Alert.alert('Invalid time', 'Done time overlaps another block.');
-      return;
-    }
-
-    void (async () => {
-      try {
-        const insertedBlock = await insertBlock(
-          {
-            lane: 'actual',
-            title: plannedBlock.title,
-            tags: [...plannedBlock.tags],
-            startMin: plannedBlock.startMin,
-            endMin: plannedBlock.endMin,
-            linkedPlannedId: plannedBlock.id,
-          },
-          dayKey
-        );
-        setBlocks((current) => sortByStartMin([...current, insertedBlock]));
-        void triggerSuccessHaptic();
-        closeEditor();
-      } catch {
-        Alert.alert('Storage error', 'Could not copy block to done.');
+  const handlePlanCheckboxPress = useCallback(
+    (blockId: string) => {
+      if (copiedPlannedIdSet.has(blockId)) {
+        removePlannedBlockFromDone(blockId);
+        return;
       }
-    })();
-  }, [closeEditor, dayKey, editorState.blockId, editorState.lane, editorState.mode, sortedBlocks]);
+
+      copyPlannedBlockToDone(blockId);
+    },
+    [copiedPlannedIdSet, copyPlannedBlockToDone, removePlannedBlockFromDone]
+  );
 
   const handleSaveEditor = useCallback(() => {
     const title = editorState.title.trim();
@@ -1867,6 +1992,9 @@ export default function DayTimeline() {
                       onDragPreview={handleDragPreview}
                       onFocusStart={handleBlockFocusStart}
                       onFocusEnd={handleBlockFocusEnd}
+                      showCopyCheckbox={block.lane === 'planned'}
+                      copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
+                      onCopyCheckboxPress={handlePlanCheckboxPress}
                       categoryColorMap={categoryColorMap}
                       interactive={!dimmed}
                       dimmed={dimmed}
@@ -1926,6 +2054,9 @@ export default function DayTimeline() {
                     onDragPreview={handleDragPreview}
                     onFocusStart={handleBlockFocusStart}
                     onFocusEnd={handleBlockFocusEnd}
+                    showCopyCheckbox={block.lane === 'planned'}
+                    copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
+                    onCopyCheckboxPress={handlePlanCheckboxPress}
                     categoryColorMap={categoryColorMap}
                     interactive={!dimmed}
                     dimmed={dimmed}

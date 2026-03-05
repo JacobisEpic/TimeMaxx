@@ -15,7 +15,7 @@ No account is required. Your timeline data stays on your device.
 - Drag blocks to adjust timing.
 - Assign each block to one category (Work, Health, Break, etc.).
 - Link a done block back to a planned block.
-- Copy a plan block directly to done.
+- Mark a plan block complete from the timeline with a checkbox that copies and links it into done.
 - Check daily insights:
   - Execution Score
   - Planned vs Done totals
@@ -41,7 +41,7 @@ Use this as an acceptance checklist from a user standpoint.
 ### 1. First-time experience
 1. Open the app.
 2. Confirm the main screen shows a day timeline.
-3. Confirm you can add a first block from empty state.
+3. Add a first block from the timeline.
 
 Expected result:
 - You can create a block without setup.
@@ -69,12 +69,16 @@ Expected result:
 - Overlapping times are blocked with a clear message.
 
 ### 4. Plan-to-done linking
-1. Open a planned block.
-2. Use `Copy to Done`.
-3. Open the created done block and confirm it can count toward a planned item.
+1. Add a planned block.
+2. Tap the planned block checkbox on timeline.
+3. Open the created done block and confirm it counts toward the planned item.
+4. Add at least one existing done block, then check another planned block.
+5. Fill done timeline so no slot can fit another checked plan block.
 
 Expected result:
-- Done block is created from plan details.
+- Done block is created from plan details and linked to the source plan block.
+- If done already has blocks, the copied block is placed in the earliest available slot that fits on the same day.
+- If no slot can fit the duration, show a succinct error message.
 - Link relationship is visible and usable.
 
 ### 5. Insights and performance
