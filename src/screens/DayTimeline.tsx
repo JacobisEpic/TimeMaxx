@@ -602,11 +602,6 @@ export default function DayTimeline() {
     };
   }, [doneTotalMin, isFutureDay, plannedTotalMin]);
 
-  const maxCategoryMinutes = useMemo(
-    () => categoryVarianceRows.reduce((max, row) => Math.max(max, row.plannedMinutes, row.doneMinutes), 0),
-    [categoryVarianceRows]
-  );
-
   useEffect(() => {
     if (!calendarVisible || calendarMonths.length === 0) {
       return;
@@ -1376,7 +1371,7 @@ export default function DayTimeline() {
 
     Alert.alert(
       'Planned vs Done by Category',
-      'For each category, compare planned time versus done time. Bar lengths are scaled within today.'
+      'For each category, compare planned time versus done time. Done bars use that category\'s planned time as the 100% baseline and stay capped at full when exceeded.'
     );
   }, []);
 
@@ -2215,11 +2210,7 @@ export default function DayTimeline() {
                       style={[
                         styles.categoryBarPlan,
                         {
-                          width: `${Math.round(
-                            (scorecardMetrics.plannedMinutes /
-                              Math.max(scorecardMetrics.plannedMinutes, scorecardMetrics.doneMinutes, 1)) *
-                              100
-                          )}%`,
+                          width: `${scorecardMetrics.plannedMinutes > 0 ? 100 : 0}%`,
                           backgroundColor: `${UI_COLORS.accent}66`,
                         },
                       ]}
@@ -2231,11 +2222,13 @@ export default function DayTimeline() {
                       style={[
                         styles.categoryBarActual,
                         {
-                          width: `${Math.round(
-                            (scorecardMetrics.doneMinutes /
-                              Math.max(scorecardMetrics.plannedMinutes, scorecardMetrics.doneMinutes, 1)) *
-                              100
-                          )}%`,
+                          width: `${
+                            scorecardMetrics.plannedMinutes > 0
+                              ? Math.min(100, Math.round((scorecardMetrics.doneMinutes / scorecardMetrics.plannedMinutes) * 100))
+                              : scorecardMetrics.doneMinutes > 0
+                                ? 100
+                                : 0
+                          }%`,
                           backgroundColor: UI_COLORS.accent,
                         },
                       ]}
@@ -2262,7 +2255,7 @@ export default function DayTimeline() {
                         style={[
                           styles.categoryBarPlan,
                           {
-                            width: `${maxCategoryMinutes > 0 ? Math.round((row.plannedMinutes / maxCategoryMinutes) * 100) : 0}%`,
+                            width: `${row.plannedMinutes > 0 ? 100 : 0}%`,
                             backgroundColor: `${row.color}66`,
                           },
                         ]}
@@ -2274,7 +2267,13 @@ export default function DayTimeline() {
                         style={[
                           styles.categoryBarActual,
                           {
-                            width: `${maxCategoryMinutes > 0 ? Math.round((row.doneMinutes / maxCategoryMinutes) * 100) : 0}%`,
+                            width: `${
+                              row.plannedMinutes > 0
+                                ? Math.min(100, Math.round((row.doneMinutes / row.plannedMinutes) * 100))
+                                : row.doneMinutes > 0
+                                  ? 100
+                                  : 0
+                            }%`,
                             backgroundColor: row.color,
                           },
                         ]}
