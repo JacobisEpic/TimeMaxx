@@ -1457,6 +1457,17 @@ export default function DayTimeline() {
           setBlocks((current) =>
             sortByStartMin(current.map((block) => (block.id === updatedBlock.id ? updatedBlock : block)))
           );
+          setDragPreviewById((current) => {
+            if (!(updatedBlock.id in current)) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[updatedBlock.id];
+            return next;
+          });
+          const refreshedBlocks = await getBlocksForDay(dayKey);
+          setBlocks(sortByStartMin(refreshedBlocks));
           void triggerSuccessHaptic();
           closeEditor();
         } catch {

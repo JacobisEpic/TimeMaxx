@@ -468,7 +468,8 @@ export default function SettingsScreen() {
   const routeDayKeyRaw = Array.isArray(dayKeyParam) ? dayKeyParam[0] : dayKeyParam;
   const routeDayKey = routeDayKeyRaw && dayKeyToLocalDate(routeDayKeyRaw) ? routeDayKeyRaw : null;
   const timelineDayKey = routeDayKey ?? getLocalDayKey();
-  const { settings, updateSettings, resetAllData, signalDataChanged, dataVersion } = useAppSettings();
+  const { settings, updateSettings, resetCategoriesToDefault, resetAllData, signalDataChanged, dataVersion } =
+    useAppSettings();
   const [saving, setSaving] = useState(false);
   const [categoryName, setCategoryName] = useState('');
   const [categoryColor, setCategoryColor] = useState(CATEGORY_COLORS[0]);
@@ -825,6 +826,33 @@ export default function SettingsScreen() {
                 Alert.alert('Data reset', 'All blocks were deleted and categories were reset.');
               } catch {
                 Alert.alert('Storage error', 'Could not reset data.');
+              } finally {
+                setSaving(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmResetCategoriesToDefault = () => {
+    Alert.alert(
+      'Reset categories to defaults',
+      'This will replace your current categories and timeline category visibility filters with the defaults.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset categories',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setSaving(true);
+              try {
+                await resetCategoriesToDefault();
+                Alert.alert('Categories reset', 'Categories and visibility filters were reset to defaults.');
+              } catch {
+                Alert.alert('Settings error', 'Could not reset categories.');
               } finally {
                 setSaving(false);
               }
@@ -1363,6 +1391,13 @@ export default function SettingsScreen() {
                 style={styles.addCategoryButton}
                 onPress={() => void addCategory()}>
                 <Text style={styles.addCategoryButtonText}>Add category</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Reset categories to default"
+                style={styles.resetCategoriesButton}
+                onPress={confirmResetCategoriesToDefault}
+                disabled={saving}>
+                <Text style={styles.resetCategoriesButtonText}>Reset categories to defaults</Text>
               </Pressable>
             </View>
           </View>
@@ -2009,6 +2044,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
+  },
+  resetCategoriesButton: {
+    alignSelf: 'flex-start',
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: '#D97706',
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  resetCategoriesButtonText: {
+    color: '#B45309',
+    fontSize: 12,
+    fontWeight: '700',
   },
   sectionTitle: {
     fontSize: 13,

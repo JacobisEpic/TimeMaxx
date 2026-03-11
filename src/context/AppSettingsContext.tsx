@@ -17,6 +17,7 @@ type AppSettingsContextValue = {
   dataVersion: number;
   refreshSettings: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  resetCategoriesToDefault: () => Promise<void>;
   resetAllData: () => Promise<void>;
   signalDataChanged: () => void;
 };
@@ -240,6 +241,18 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     setDataVersion((current) => current + 1);
   }, []);
 
+  const resetCategoriesToDefault = useCallback(async () => {
+    await Promise.all([
+      setMetaValue(META_KEYS.categories, JSON.stringify(DEFAULT_CATEGORIES)),
+      setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(DEFAULT_SETTINGS.visibleCategoryIds)),
+    ]);
+    setSettings((current) => ({
+      ...current,
+      categories: DEFAULT_CATEGORIES,
+      visibleCategoryIds: DEFAULT_SETTINGS.visibleCategoryIds,
+    }));
+  }, []);
+
   const signalDataChanged = useCallback(() => {
     setDataVersion((current) => current + 1);
   }, []);
@@ -251,10 +264,20 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       dataVersion,
       refreshSettings,
       updateSettings,
+      resetCategoriesToDefault,
       resetAllData,
       signalDataChanged,
     }),
-    [settings, loading, dataVersion, refreshSettings, updateSettings, resetAllData, signalDataChanged]
+    [
+      settings,
+      loading,
+      dataVersion,
+      refreshSettings,
+      updateSettings,
+      resetCategoriesToDefault,
+      resetAllData,
+      signalDataChanged,
+    ]
   );
 
   return <AppSettingsContext.Provider value={value}>{children}</AppSettingsContext.Provider>;

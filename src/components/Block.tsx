@@ -124,9 +124,6 @@ export function Block({
       gestureStarted.value = false;
       isDragging.value = false;
       dragDeltaMin.value = 0;
-      if (onDragPreview) {
-        runOnJS(onDragPreview)(id, startMin, endMin);
-      }
     });
 
   const tapGesture = Gesture.Tap()
