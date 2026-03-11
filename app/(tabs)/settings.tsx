@@ -21,8 +21,10 @@ import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { useAppSettings, type AppSettings } from '@/src/context/AppSettingsContext';
 import { seedLastNDays } from '@/src/dev/seedData';
 import { clearAllBlocks, getAllBlocksByDay, getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
-import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
+import type { Block as TimeBlock, BlockRepeatRule, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
+import { isExcludedFromExecutionMetrics } from '@/src/utils/executionScore';
+import { normalizeRepeatRule } from '@/src/utils/recurrence';
 import { formatDuration, formatMinutesAmPm, parseTimeText } from '@/src/utils/time';
 
 const CATEGORY_COLORS = [
@@ -70,6 +72,10 @@ type ParsedSummaryBlock = {
 };
 
 const FULL_BACKUP_SCHEMA = 'plan-vs-actual.backup.v1';
+const PROTECTED_CATEGORIES: AppSettings['categories'] = [
+  { id: 'break', label: 'Break', color: '#F59E0B' },
+  { id: 'other', label: 'None', color: '#9CA3AF' },
+];
 
 type ImportedBackupBlock = {
   id: string;
@@ -79,6 +85,9 @@ type ImportedBackupBlock = {
   startMin: number;
   endMin: number;
   linkedPlannedId?: string | null;
+  recurrenceId?: string | null;
+  recurrenceIndex?: number | null;
+  repeatRule?: BlockRepeatRule | null;
 };
 
 type FullBackupPayload = {
@@ -114,14 +123,25 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
   return value;
 }
 
-function ensureOtherCategory(categories: AppSettings['categories']): AppSettings['categories'] {
-  const normalized = categories.map((item) => (item.id === 'other' ? { ...item, label: 'None', color: '#9CA3AF' } : item));
-  const hasOther = normalized.some((item) => item.id === 'other');
-  if (hasOther) {
-    return normalized;
+function ensureProtectedCategories(categories: AppSettings['categories']): AppSettings['categories'] {
+  const protectedById = new Map(PROTECTED_CATEGORIES.map((category) => [category.id, category]));
+  const normalized = categories.map((item) => {
+    const protectedCategory = protectedById.get(item.id);
+    if (!protectedCategory) {
+      return item;
+    }
+
+    return { ...item, label: protectedCategory.label, color: protectedCategory.color };
+  });
+  const existingIds = new Set(normalized.map((item) => item.id));
+
+  for (const protectedCategory of PROTECTED_CATEGORIES) {
+    if (!existingIds.has(protectedCategory.id)) {
+      normalized.push({ ...protectedCategory });
+    }
   }
 
-  return [...normalized, { id: 'other', label: 'None', color: '#9CA3AF' }];
+  return normalized;
 }
 
 function parseImportedSettings(raw: unknown, fallback: AppSettings): AppSettings | null {
@@ -147,7 +167,7 @@ function parseImportedSettings(raw: unknown, fallback: AppSettings): AppSettings
       return { id, label, color };
     })
     .filter((item): item is { id: string; label: string; color: string } => item !== null);
-  const categories = ensureOtherCategory(parsedCategories.length > 0 ? parsedCategories : fallback.categories);
+  const categories = ensureProtectedCategories(parsedCategories.length > 0 ? parsedCategories : fallback.categories);
 
   const allowedVisibleCategoryIds = new Set(categories.map((category) => category.id));
   const visibleCategoryIdsRaw = Array.isArray(raw.visibleCategoryIds) ? raw.visibleCategoryIds : fallback.visibleCategoryIds;
@@ -167,7 +187,39 @@ function parseImportedSettings(raw: unknown, fallback: AppSettings): AppSettings
   };
 }
 
-function parseImportedBackupBlock(raw: unknown, fallbackId: string): ImportedBackupBlock | null {
+function parseImportedRepeatRule(rawRule: unknown, dayKey: string): BlockRepeatRule | null {
+  if (!isRecord(rawRule)) {
+    return null;
+  }
+
+  const presetRaw = rawRule.preset;
+  const preset =
+    presetRaw === 'none' ||
+    presetRaw === 'daily' ||
+    presetRaw === 'weekdays' ||
+    presetRaw === 'weekly' ||
+    presetRaw === 'monthly' ||
+    presetRaw === 'yearly'
+      ? presetRaw
+      : 'none';
+
+  return normalizeRepeatRule(
+    {
+      preset,
+      interval: Number(rawRule.interval ?? 1),
+      weekDays: Array.isArray(rawRule.weekDays)
+        ? rawRule.weekDays.map((value) => Number(value)).filter((value) => Number.isInteger(value))
+        : [],
+      monthlyMode: rawRule.monthlyMode === 'ordinalWeekday' ? 'ordinalWeekday' : 'dayOfMonth',
+      endMode: rawRule.endMode === 'never' ? 'never' : rawRule.endMode === 'afterCount' ? 'afterCount' : 'onDate',
+      endDayKey: typeof rawRule.endDayKey === 'string' ? rawRule.endDayKey : dayKey,
+      occurrenceCount: Number(rawRule.occurrenceCount ?? 10),
+    },
+    dayKey
+  );
+}
+
+function parseImportedBackupBlock(raw: unknown, fallbackId: string, dayKey: string): ImportedBackupBlock | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -197,6 +249,14 @@ function parseImportedBackupBlock(raw: unknown, fallbackId: string): ImportedBac
     lane === 'actual' && typeof raw.linkedPlannedId === 'string' && raw.linkedPlannedId.trim().length > 0
       ? raw.linkedPlannedId.trim()
       : null;
+  const recurrenceId =
+    typeof raw.recurrenceId === 'string' && raw.recurrenceId.trim().length > 0 ? raw.recurrenceId.trim() : null;
+  const rawRecurrenceIndex = Number(raw.recurrenceIndex);
+  const recurrenceIndex =
+    recurrenceId && Number.isInteger(rawRecurrenceIndex) && rawRecurrenceIndex >= 1
+      ? rawRecurrenceIndex
+      : null;
+  const repeatRule = recurrenceId ? parseImportedRepeatRule(raw.repeatRule, dayKey) : null;
   const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id.trim() : fallbackId;
 
   return {
@@ -207,6 +267,9 @@ function parseImportedBackupBlock(raw: unknown, fallbackId: string): ImportedBac
     startMin,
     endMin,
     linkedPlannedId: lane === 'actual' ? linkedPlannedId : undefined,
+    recurrenceId,
+    recurrenceIndex,
+    repeatRule,
   };
 }
 
@@ -242,7 +305,7 @@ function parseFullBackupInput(input: string, fallbackSettings: AppSettings): Par
 
       const parsedBlocks: ImportedBackupBlock[] = [];
       for (let index = 0; index < rawBlocks.length; index += 1) {
-        const parsedBlock = parseImportedBackupBlock(rawBlocks[index], `${dayKey}-${index + 1}`);
+        const parsedBlock = parseImportedBackupBlock(rawBlocks[index], `${dayKey}-${index + 1}`, dayKey);
         if (!parsedBlock) {
           return null;
         }
@@ -280,11 +343,6 @@ function hasOverlap(
 
     return startMin < other.endMin && endMin > other.startMin;
   });
-}
-
-function isExcludedFromMetrics(block: TimeBlock): boolean {
-  const key = block.tags[0]?.trim().toLowerCase() || 'uncategorized';
-  return key === 'other' || key === 'none';
 }
 
 function formatBlockLine(block: TimeBlock): string {
@@ -481,10 +539,8 @@ export default function SettingsScreen() {
   const [showEditCustomColorInput, setShowEditCustomColorInput] = useState(false);
   const [customEditColorInput, setCustomEditColorInput] = useState('');
   const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
-  const [importSummaryVisible, setImportSummaryVisible] = useState(false);
-  const [importSummaryText, setImportSummaryText] = useState('');
-  const [importAllDataVisible, setImportAllDataVisible] = useState(false);
-  const [importAllDataText, setImportAllDataText] = useState('');
+  const [importDataVisible, setImportDataVisible] = useState(false);
+  const [importDataText, setImportDataText] = useState('');
   const [copyPlanFromDayVisible, setCopyPlanFromDayVisible] = useState(false);
   const [copyPlanTargetDayKey, setCopyPlanTargetDayKey] = useState(timelineDayKey);
   const [copyPlanSourceDayKey, setCopyPlanSourceDayKey] = useState(() => shiftDayKey(timelineDayKey, -1));
@@ -549,7 +605,7 @@ export default function SettingsScreen() {
     [copyPlanCalendarMonthStart]
   );
   const timelineTagTotals = useMemo(
-    () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromMetrics(block))),
+    () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromExecutionMetrics(block))),
     [timelineBlocks]
   );
   const visibleCategoryIdSet = useMemo(
@@ -680,8 +736,8 @@ export default function SettingsScreen() {
   };
 
   const removeCategory = async (id: string) => {
-    if (id === 'other') {
-      Alert.alert('Protected category', 'The None category cannot be deleted.');
+    if (id === 'other' || id === 'break') {
+      Alert.alert('Protected category', 'The None and Break categories cannot be deleted.');
       return;
     }
 
@@ -926,90 +982,8 @@ export default function SettingsScreen() {
     })();
   }, [settings]);
 
-  const importAllData = useCallback(() => {
-    const parsed = parseFullBackupInput(importAllDataText, settings);
-    if (!parsed) {
-      Alert.alert('Invalid backup', `Paste valid backup JSON from "Export all data."`);
-      return;
-    }
-
-    Alert.alert(
-      'Import all data',
-      'This replaces all current blocks and settings with the backup data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Import all data',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              setSaving(true);
-              try {
-                await clearAllBlocks();
-                await updateSettings(parsed.settings);
-
-                const sortedDayKeys = Object.keys(parsed.blocksByDay).sort((a, b) => a.localeCompare(b));
-                const plannedIdMap = new Map<string, string>();
-                let importedCount = 0;
-
-                for (const dayKey of sortedDayKeys) {
-                  const blocks = parsed.blocksByDay[dayKey] ?? [];
-                  const plannedBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'planned'));
-                  for (const block of plannedBlocks) {
-                    const inserted = await insertBlock(
-                      {
-                        lane: 'planned',
-                        title: block.title,
-                        tags: [...block.tags],
-                        startMin: block.startMin,
-                        endMin: block.endMin,
-                      },
-                      dayKey
-                    );
-                    plannedIdMap.set(block.id, inserted.id);
-                    importedCount += 1;
-                  }
-                }
-
-                for (const dayKey of sortedDayKeys) {
-                  const blocks = parsed.blocksByDay[dayKey] ?? [];
-                  const actualBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'actual'));
-                  for (const block of actualBlocks) {
-                    const linkedPlannedId = block.linkedPlannedId ? plannedIdMap.get(block.linkedPlannedId) ?? null : null;
-                    await insertBlock(
-                      {
-                        lane: 'actual',
-                        title: block.title,
-                        tags: [...block.tags],
-                        startMin: block.startMin,
-                        endMin: block.endMin,
-                        linkedPlannedId,
-                      },
-                      dayKey
-                    );
-                    importedCount += 1;
-                  }
-                }
-
-                signalDataChanged();
-                setImportAllDataVisible(false);
-                setImportAllDataText('');
-                Alert.alert('Import complete', `Imported ${importedCount} blocks across ${sortedDayKeys.length} days.`);
-              } catch {
-                signalDataChanged();
-                Alert.alert('Import error', 'Could not import all data.');
-              } finally {
-                setSaving(false);
-              }
-            })();
-          },
-        },
-      ]
-    );
-  }, [importAllDataText, settings, signalDataChanged, updateSettings]);
-
-  const shareTimelineSummary = useCallback(() => {
-    const metricBlocks = timelineBlocks.filter((block) => !isExcludedFromMetrics(block));
+  const exportTimelineDayData = useCallback(() => {
+    const metricBlocks = timelineBlocks.filter((block) => !isExcludedFromExecutionMetrics(block));
     const plannedBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned'));
     const actualBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual'));
     const plannedTotal = plannedBlocks.reduce((total, block) => total + Math.max(0, block.endMin - block.startMin), 0);
@@ -1044,14 +1018,104 @@ export default function SettingsScreen() {
 
     void Share.share({
       message: summary,
-      title: `Day summary ${timelineDayKey}`,
+      title: `Day data ${timelineDayKey}`,
     });
   }, [timelineBlocks, timelineDateLabel, timelineDayKey, timelineTagTotals]);
 
-  const importTimelineSummary = useCallback(() => {
-    const parsed = parseSummaryInput(importSummaryText);
-    if (parsed.blocks.length === 0) {
-      Alert.alert('Nothing to import', 'Paste a valid shared summary with plan and/or done blocks.');
+  const importData = useCallback(() => {
+    const input = importDataText.trim();
+    if (!input) {
+      Alert.alert('Nothing to import', `Paste backup JSON or text from "Export Today's data."`);
+      return;
+    }
+
+    const parsedBackup = parseFullBackupInput(input, settings);
+    if (parsedBackup) {
+      Alert.alert(
+        'Import all data',
+        'Detected full backup JSON. This replaces all current blocks and settings with the backup data. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Import all data',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setSaving(true);
+                try {
+                  await clearAllBlocks();
+                  await updateSettings(parsedBackup.settings);
+
+                  const sortedDayKeys = Object.keys(parsedBackup.blocksByDay).sort((a, b) => a.localeCompare(b));
+                  const plannedIdMap = new Map<string, string>();
+                  let importedCount = 0;
+
+                  for (const dayKey of sortedDayKeys) {
+                    const blocks = parsedBackup.blocksByDay[dayKey] ?? [];
+                    const plannedBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'planned'));
+                    for (const block of plannedBlocks) {
+                      const inserted = await insertBlock(
+                        {
+                          lane: 'planned',
+                          title: block.title,
+                          tags: [...block.tags],
+                          startMin: block.startMin,
+                          endMin: block.endMin,
+                          recurrenceId: block.recurrenceId ?? null,
+                          recurrenceIndex: block.recurrenceIndex ?? null,
+                          repeatRule: block.recurrenceId ? block.repeatRule ?? null : null,
+                        },
+                        dayKey
+                      );
+                      plannedIdMap.set(block.id, inserted.id);
+                      importedCount += 1;
+                    }
+                  }
+
+                  for (const dayKey of sortedDayKeys) {
+                    const blocks = parsedBackup.blocksByDay[dayKey] ?? [];
+                    const actualBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'actual'));
+                    for (const block of actualBlocks) {
+                      const linkedPlannedId = block.linkedPlannedId ? plannedIdMap.get(block.linkedPlannedId) ?? null : null;
+                      await insertBlock(
+                        {
+                          lane: 'actual',
+                          title: block.title,
+                          tags: [...block.tags],
+                          startMin: block.startMin,
+                          endMin: block.endMin,
+                          linkedPlannedId,
+                          recurrenceId: block.recurrenceId ?? null,
+                          recurrenceIndex: block.recurrenceIndex ?? null,
+                          repeatRule: block.recurrenceId ? block.repeatRule ?? null : null,
+                        },
+                        dayKey
+                      );
+                      importedCount += 1;
+                    }
+                  }
+
+                  signalDataChanged();
+                  setImportDataVisible(false);
+                  setImportDataText('');
+                  Alert.alert('Import complete', `Imported ${importedCount} blocks across ${sortedDayKeys.length} days.`);
+                } catch {
+                  signalDataChanged();
+                  Alert.alert('Import error', 'Could not import all data.');
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    const parsedSummary = parseSummaryInput(input);
+    if (parsedSummary.blocks.length === 0) {
+      Alert.alert('Unsupported import', `Paste backup JSON from "Export all data" or text from "Export Today's data."`);
       return;
     }
 
@@ -1084,8 +1148,8 @@ export default function SettingsScreen() {
         let skippedOverlap = 0;
         let skippedDuplicate = 0;
         const plannedFirst = [
-          ...parsed.blocks.filter((block) => block.lane === 'planned'),
-          ...parsed.blocks.filter((block) => block.lane === 'actual'),
+          ...parsedSummary.blocks.filter((block) => block.lane === 'planned'),
+          ...parsedSummary.blocks.filter((block) => block.lane === 'actual'),
         ];
 
         for (const block of plannedFirst) {
@@ -1130,19 +1194,19 @@ export default function SettingsScreen() {
         }
 
         signalDataChanged();
-        setImportSummaryVisible(false);
-        setImportSummaryText('');
+        setImportDataVisible(false);
+        setImportDataText('');
         Alert.alert(
           'Import complete',
-          `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, invalid lines ${parsed.invalidLines}.`
+          `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, invalid lines ${parsedSummary.invalidLines}.`
         );
       } catch {
-        Alert.alert('Import error', 'Could not import summary.');
+        Alert.alert('Import error', "Could not import Today's data.");
       } finally {
         setSaving(false);
       }
     })();
-  }, [importSummaryText, signalDataChanged, timelineDayKey]);
+  }, [importDataText, settings, signalDataChanged, timelineDayKey, updateSettings]);
 
   const openCopyPlanFromPastDay = useCallback(() => {
     const fallbackTargetDayKey = timelineDayKey;
@@ -1392,18 +1456,11 @@ export default function SettingsScreen() {
                 onPress={() => void addCategory()}>
                 <Text style={styles.addCategoryButtonText}>Add category</Text>
               </Pressable>
-              <Pressable
-                accessibilityLabel="Reset categories to default"
-                style={styles.resetCategoriesButton}
-                onPress={confirmResetCategoriesToDefault}
-                disabled={saving}>
-                <Text style={styles.resetCategoriesButtonText}>Reset categories to defaults</Text>
-              </Pressable>
             </View>
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Timeline Actions</Text>
+            <Text style={styles.sectionTitle}>Actions</Text>
             <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
             <Text style={styles.toggleHint}>Switching phones? Export all data on one device, then import it on the other.</Text>
             <View style={styles.timelineActionList}>
@@ -1414,28 +1471,29 @@ export default function SettingsScreen() {
                 <Text style={styles.timelineActionButtonText}>Export all data</Text>
               </Pressable>
               <Pressable
-                accessibilityLabel="Import all data"
+                accessibilityLabel="Import data"
                 style={styles.timelineActionButton}
-                onPress={() => setImportAllDataVisible(true)}>
-                <Text style={styles.timelineActionButtonText}>Import all data</Text>
+                onPress={() => setImportDataVisible(true)}>
+                <Text style={styles.timelineActionButtonText}>Import data</Text>
               </Pressable>
               <Pressable
-                accessibilityLabel="Share timeline summary"
+                accessibilityLabel="Export today's data"
                 style={styles.timelineActionButton}
-                onPress={shareTimelineSummary}>
-                <Text style={styles.timelineActionButtonText}>Share Summary</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Import timeline summary"
-                style={styles.timelineActionButton}
-                onPress={() => setImportSummaryVisible(true)}>
-                <Text style={styles.timelineActionButtonText}>Import Summary</Text>
+                onPress={exportTimelineDayData}>
+                <Text style={styles.timelineActionButtonText}>Export Today&apos;s data</Text>
               </Pressable>
               <Pressable
                 accessibilityLabel="Copy plan blocks from a past day"
                 style={styles.timelineActionButton}
                 onPress={openCopyPlanFromPastDay}>
                 <Text style={styles.timelineActionButtonText}>Copy Plan from Past Day</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Reset categories to defaults"
+                style={styles.timelineActionButton}
+                onPress={confirmResetCategoriesToDefault}
+                disabled={saving}>
+                <Text style={styles.timelineActionButtonText}>Reset categories to defaults</Text>
               </Pressable>
             </View>
           </View>
@@ -1581,7 +1639,9 @@ export default function SettingsScreen() {
                 </Pressable>
                 <Pressable
                   style={styles.editorDeleteButton}
-                  disabled={saving || !editingCategoryId || editingCategoryId === 'other'}
+                  disabled={
+                    saving || !editingCategoryId || editingCategoryId === 'other' || editingCategoryId === 'break'
+                  }
                   onPress={() => {
                     if (editingCategoryId) {
                       void removeCategory(editingCategoryId);
@@ -1589,7 +1649,7 @@ export default function SettingsScreen() {
                     }
                   }}>
                   <Text style={styles.editorDeleteButtonText}>
-                    {editingCategoryId === 'other' ? 'Protected' : 'Delete'}
+                    {editingCategoryId === 'other' || editingCategoryId === 'break' ? 'Protected' : 'Delete'}
                   </Text>
                 </Pressable>
               </View>
@@ -1644,85 +1704,40 @@ export default function SettingsScreen() {
       <Modal
         transparent
         animationType="fade"
-        visible={importAllDataVisible}
-        onRequestClose={() => setImportAllDataVisible(false)}>
+        visible={importDataVisible}
+        onRequestClose={() => setImportDataVisible(false)}>
         <View style={styles.modalRoot}>
-          <Pressable style={styles.backdrop} onPress={() => setImportAllDataVisible(false)} />
+          <Pressable style={styles.backdrop} onPress={() => setImportDataVisible(false)} />
           <View style={styles.keyboardLift}>
             <View style={styles.sheetCard}>
               <View style={styles.sheetGrabber} />
               <View style={styles.sheetHeaderRow}>
-                <Text style={styles.sheetTitle}>Import All Data</Text>
+                <Text style={styles.sheetTitle}>Import Data</Text>
                 <Pressable
-                  accessibilityLabel="Close import all data"
+                  accessibilityLabel="Close import data"
                   style={styles.sheetCloseButton}
-                  onPress={() => setImportAllDataVisible(false)}>
+                  onPress={() => setImportDataVisible(false)}>
                   <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
                 </Pressable>
               </View>
-              <Text style={styles.toggleHint}>Paste JSON from Export all data.</Text>
+              <Text style={styles.toggleHint}>Paste backup JSON from Export all data, or text from Export Today&apos;s data.</Text>
               <TextInput
-                value={importAllDataText}
-                onChangeText={setImportAllDataText}
+                value={importDataText}
+                onChangeText={setImportDataText}
                 multiline
                 textAlignVertical="top"
                 style={styles.summaryImportInput}
-                placeholder="Paste backup JSON here..."
+                placeholder="Paste import text here..."
                 placeholderTextColor="#94A3B8"
               />
               <View style={styles.editorActions}>
-                <Pressable style={styles.editorDeleteButton} onPress={() => setImportAllDataVisible(false)}>
+                <Pressable style={styles.editorDeleteButton} onPress={() => setImportDataVisible(false)}>
                   <Text style={styles.editorDeleteButtonText}>Cancel</Text>
                 </Pressable>
                 <Pressable
                   style={styles.editorSaveButton}
                   disabled={saving}
-                  onPress={importAllData}>
-                  <Text style={styles.editorSaveButtonText}>Import all data</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        transparent
-        animationType="fade"
-        visible={importSummaryVisible}
-        onRequestClose={() => setImportSummaryVisible(false)}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.backdrop} onPress={() => setImportSummaryVisible(false)} />
-          <View style={styles.keyboardLift}>
-            <View style={styles.sheetCard}>
-              <View style={styles.sheetGrabber} />
-              <View style={styles.sheetHeaderRow}>
-                <Text style={styles.sheetTitle}>Import Summary</Text>
-                <Pressable
-                  accessibilityLabel="Close summary import"
-                  style={styles.sheetCloseButton}
-                  onPress={() => setImportSummaryVisible(false)}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
-                </Pressable>
-              </View>
-              <Text style={styles.toggleHint}>Paste text from Share Summary output.</Text>
-              <TextInput
-                value={importSummaryText}
-                onChangeText={setImportSummaryText}
-                multiline
-                textAlignVertical="top"
-                style={styles.summaryImportInput}
-                placeholder="Paste summary text here..."
-                placeholderTextColor="#94A3B8"
-              />
-              <View style={styles.editorActions}>
-                <Pressable style={styles.editorDeleteButton} onPress={() => setImportSummaryVisible(false)}>
-                  <Text style={styles.editorDeleteButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.editorSaveButton}
-                  disabled={saving}
-                  onPress={importTimelineSummary}>
+                  onPress={importData}>
                   <Text style={styles.editorSaveButtonText}>Import</Text>
                 </Pressable>
               </View>
@@ -2044,20 +2059,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
-  },
-  resetCategoriesButton: {
-    alignSelf: 'flex-start',
-    borderRadius: UI_RADIUS.control,
-    borderWidth: 1,
-    borderColor: '#D97706',
-    backgroundColor: '#FFFBEB',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  resetCategoriesButtonText: {
-    color: '#B45309',
-    fontSize: 12,
-    fontWeight: '700',
   },
   sectionTitle: {
     fontSize: 13,

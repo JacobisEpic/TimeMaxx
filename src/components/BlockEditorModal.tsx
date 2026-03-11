@@ -15,7 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { DEFAULT_CATEGORIES } from '@/src/context/AppSettingsContext';
-import type { BlockRepeatPreset, Lane } from '@/src/types/blocks';
+import type {
+  BlockMonthlyRepeatMode,
+  BlockRepeatEndMode,
+  BlockRepeatPreset,
+  Lane,
+} from '@/src/types/blocks';
+import { dayKeyToLocalDate, getLocalDayKey } from '@/src/utils/dayKey';
 import { formatHHMM, formatMinutesAmPm, parseHHMM } from '@/src/utils/time';
 
 type PlannedLinkOption = {
@@ -31,13 +37,19 @@ type PickerType = 'startTime' | 'endTime' | null;
 type BlockEditorModalProps = {
   visible: boolean;
   mode: 'create' | 'edit';
+  showRepeatControls?: boolean;
   lane: Lane;
   titleValue: string;
   selectedTags: string[];
   startValue: string;
   endValue: string;
   repeatPreset: BlockRepeatPreset;
+  repeatIntervalText: string;
+  repeatWeekDays: number[];
+  repeatMonthlyMode: BlockMonthlyRepeatMode;
+  repeatEndMode: BlockRepeatEndMode;
   repeatUntilDayKey: string;
+  repeatOccurrenceCountText: string;
   linkedPlannedId: string | null;
   categoryOptions: { id: string; label: string; color: string }[];
   plannedLinkOptions: PlannedLinkOption[];
@@ -48,7 +60,12 @@ type BlockEditorModalProps = {
   onChangeStart: (value: string) => void;
   onChangeEnd: (value: string) => void;
   onChangeRepeatPreset: (preset: BlockRepeatPreset) => void;
+  onChangeRepeatIntervalText: (value: string) => void;
+  onToggleRepeatWeekDay: (day: number) => void;
+  onChangeRepeatMonthlyMode: (value: BlockMonthlyRepeatMode) => void;
+  onChangeRepeatEndMode: (value: BlockRepeatEndMode) => void;
   onChangeRepeatUntilDayKey: (value: string) => void;
+  onChangeRepeatOccurrenceCountText: (value: string) => void;
   onChangeLane: (lane: Lane) => void;
   onChangeLinkedPlannedId: (value: string | null) => void;
   onCancel: () => void;
@@ -66,10 +83,84 @@ const REPEAT_OPTIONS: { value: BlockRepeatPreset; label: string }[] = [
   { value: 'daily', label: 'Daily' },
   { value: 'weekdays', label: 'Every weekday (Mon-Fri)' },
   { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'yearly', label: 'Yearly' },
 ];
+const REPEAT_END_OPTIONS: { value: BlockRepeatEndMode; label: string }[] = [
+  { value: 'never', label: 'Never' },
+  { value: 'onDate', label: 'On date' },
+  { value: 'afterCount', label: 'After count' },
+];
+const REPEAT_MONTHLY_OPTIONS: { value: BlockMonthlyRepeatMode; label: string }[] = [
+  { value: 'dayOfMonth', label: 'Day of month' },
+  { value: 'ordinalWeekday', label: 'Ordinal weekday' },
+];
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'S' },
+  { value: 1, label: 'M' },
+  { value: 2, label: 'T' },
+  { value: 3, label: 'W' },
+  { value: 4, label: 'T' },
+  { value: 5, label: 'F' },
+  { value: 6, label: 'S' },
+];
+const CALENDAR_WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+type CalendarCell = {
+  key: string;
+  dayKey: string;
+  date: Date;
+  inCurrentMonth: boolean;
+};
 
 function toTimeLabel(hour24: number, minute: number): string {
   return formatMinutesAmPm(hour24 * 60 + minute);
+}
+
+function getMonthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getDaysInMonth(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function formatRepeatUntilLabel(dayKey: string): string {
+  const date = dayKeyToLocalDate(dayKey);
+  if (!date) {
+    return 'Select date';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+function buildCalendarCells(monthStart: Date): CalendarCell[] {
+  const start = getMonthStart(monthStart);
+  const firstWeekday = start.getDay();
+  const dayCount = getDaysInMonth(start);
+  const rowCount = Math.ceil((firstWeekday + dayCount) / 7);
+  const totalCells = rowCount * 7;
+  const cells: CalendarCell[] = [];
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayOfMonth = i - firstWeekday + 1;
+    const cellDate = new Date(start.getFullYear(), start.getMonth(), dayOfMonth);
+    const inCurrentMonth =
+      cellDate.getMonth() === start.getMonth() && cellDate.getFullYear() === start.getFullYear();
+
+    cells.push({
+      key: `${getLocalDayKey(cellDate)}-${i}`,
+      dayKey: getLocalDayKey(cellDate),
+      date: cellDate,
+      inCurrentMonth,
+    });
+  }
+
+  return cells;
 }
 
 function getStartAndDuration(startValue: string, endValue: string): { startMin: number; durationMin: number } {
@@ -86,13 +177,19 @@ function getStartAndDuration(startValue: string, endValue: string): { startMin: 
 export function BlockEditorModal({
   visible,
   mode,
+  showRepeatControls = mode === 'create',
   lane,
   titleValue,
   selectedTags,
   startValue,
   endValue,
   repeatPreset,
+  repeatIntervalText,
+  repeatWeekDays,
+  repeatMonthlyMode,
+  repeatEndMode,
   repeatUntilDayKey,
+  repeatOccurrenceCountText,
   linkedPlannedId,
   categoryOptions,
   plannedLinkOptions,
@@ -103,7 +200,12 @@ export function BlockEditorModal({
   onChangeStart,
   onChangeEnd,
   onChangeRepeatPreset,
+  onChangeRepeatIntervalText,
+  onToggleRepeatWeekDay,
+  onChangeRepeatMonthlyMode,
+  onChangeRepeatEndMode,
   onChangeRepeatUntilDayKey,
+  onChangeRepeatOccurrenceCountText,
   onChangeLane,
   onChangeLinkedPlannedId,
   onCancel,
@@ -115,6 +217,11 @@ export function BlockEditorModal({
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [repeatPickerVisible, setRepeatPickerVisible] = useState(false);
+  const [repeatCalendarVisible, setRepeatCalendarVisible] = useState(false);
+  const [repeatCalendarMonthStart, setRepeatCalendarMonthStart] = useState<Date>(() => {
+    const parsed = dayKeyToLocalDate(repeatUntilDayKey);
+    return getMonthStart(parsed ?? new Date());
+  });
   const [wheelHour, setWheelHour] = useState(8);
   const [wheelMinute, setWheelMinute] = useState(0);
   const [wheelPeriod, setWheelPeriod] = useState<'AM' | 'PM'>('AM');
@@ -172,14 +279,47 @@ export function BlockEditorModal({
     () => REPEAT_OPTIONS.find((option) => option.value === repeatPreset)?.label ?? 'Does not repeat',
     [repeatPreset]
   );
+  const repeatIntervalUnit = useMemo(() => {
+    if (repeatPreset === 'daily') {
+      return 'day(s)';
+    }
+    if (repeatPreset === 'weekdays' || repeatPreset === 'weekly') {
+      return 'week(s)';
+    }
+    if (repeatPreset === 'monthly') {
+      return 'month(s)';
+    }
+    return 'year(s)';
+  }, [repeatPreset]);
+  const repeatUntilLabel = useMemo(() => formatRepeatUntilLabel(repeatUntilDayKey), [repeatUntilDayKey]);
+  const todayDayKey = useMemo(() => getLocalDayKey(), []);
+  const repeatCalendarMonthLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+      }).format(repeatCalendarMonthStart),
+    [repeatCalendarMonthStart]
+  );
+  const repeatCalendarCells = useMemo(
+    () => buildCalendarCells(repeatCalendarMonthStart),
+    [repeatCalendarMonthStart]
+  );
 
   useEffect(() => {
     if (!visible) {
       setLinkPickerVisible(false);
       setPickerType(null);
       setRepeatPickerVisible(false);
+      setRepeatCalendarVisible(false);
     }
   }, [visible]);
+
+  const openRepeatCalendar = () => {
+    const selectedDate = dayKeyToLocalDate(repeatUntilDayKey);
+    setRepeatCalendarMonthStart(getMonthStart(selectedDate ?? new Date()));
+    setRepeatCalendarVisible(true);
+  };
 
   useEffect(() => {
     if (pickerType === null) {
@@ -296,7 +436,7 @@ export function BlockEditorModal({
               </View>
             </View>
 
-            {mode === 'create' ? (
+            {showRepeatControls ? (
               <View style={styles.repeatSection}>
                 <Text style={styles.label}>Repeat</Text>
                 <Pressable
@@ -307,19 +447,125 @@ export function BlockEditorModal({
                   <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
                 </Pressable>
                 {repeatPreset !== 'none' ? (
-                  <View style={styles.repeatUntilWrap}>
-                    <Text style={styles.label}>Repeat Until</Text>
-                    <TextInput
-                      value={repeatUntilDayKey}
-                      onChangeText={onChangeRepeatUntilDayKey}
-                      placeholder="YYYY-MM-DD"
-                      style={styles.input}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      accessibilityLabel="Repeat until date"
-                      placeholderTextColor={UI_COLORS.neutralTextSoft}
-                    />
-                    <Text style={styles.repeatHintText}>Format: YYYY-MM-DD</Text>
+                  <View style={styles.repeatDetailsWrap}>
+                    {repeatPreset !== 'weekdays' ? (
+                      <View style={styles.repeatUntilWrap}>
+                        <Text style={styles.label}>Every</Text>
+                        <View style={styles.repeatInlineRow}>
+                          <TextInput
+                            value={repeatIntervalText}
+                            onChangeText={onChangeRepeatIntervalText}
+                            placeholder="1"
+                            style={[styles.input, styles.repeatNumberInput]}
+                            keyboardType="number-pad"
+                            accessibilityLabel="Repeat interval"
+                            placeholderTextColor={UI_COLORS.neutralTextSoft}
+                          />
+                          <Text style={styles.repeatInlineLabel}>{repeatIntervalUnit}</Text>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    {repeatPreset === 'weekly' ? (
+                      <View style={styles.repeatUntilWrap}>
+                        <Text style={styles.label}>Days</Text>
+                        <View style={styles.weekdayRow}>
+                          {WEEKDAY_OPTIONS.map((day) => {
+                            const selected = repeatWeekDays.includes(day.value);
+                            return (
+                              <Pressable
+                                key={`repeat-day-${day.value}`}
+                                accessibilityLabel={`Toggle ${day.label}`}
+                                style={[styles.weekdayChip, selected && styles.weekdayChipSelected]}
+                                onPress={() => onToggleRepeatWeekDay(day.value)}>
+                                <Text style={[styles.weekdayChipText, selected && styles.weekdayChipTextSelected]}>
+                                  {day.label}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ) : null}
+
+                    {repeatPreset === 'monthly' ? (
+                      <View style={styles.repeatUntilWrap}>
+                        <Text style={styles.label}>Monthly Pattern</Text>
+                        <View style={styles.modeChipRow}>
+                          {REPEAT_MONTHLY_OPTIONS.map((option) => {
+                            const selected = option.value === repeatMonthlyMode;
+                            return (
+                              <Pressable
+                                key={option.value}
+                                accessibilityLabel={`Use ${option.label}`}
+                                style={[styles.modeChip, selected && styles.modeChipSelected]}
+                                onPress={() => onChangeRepeatMonthlyMode(option.value)}>
+                                <Text style={[styles.modeChipText, selected && styles.modeChipTextSelected]}>
+                                  {option.label}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.repeatUntilWrap}>
+                      <Text style={styles.label}>Ends</Text>
+                      <View style={styles.modeChipRow}>
+                        {REPEAT_END_OPTIONS.map((option) => {
+                          const selected = option.value === repeatEndMode;
+                          return (
+                            <Pressable
+                              key={option.value}
+                              accessibilityLabel={`Set end mode ${option.label}`}
+                              style={[styles.modeChip, selected && styles.modeChipSelected]}
+                              onPress={() => onChangeRepeatEndMode(option.value)}>
+                              <Text style={[styles.modeChipText, selected && styles.modeChipTextSelected]}>
+                                {option.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    {repeatEndMode === 'onDate' ? (
+                      <View style={styles.repeatUntilWrap}>
+                        <Text style={styles.label}>Repeat Until</Text>
+                        <Pressable
+                          accessibilityLabel="Pick repeat until date"
+                          style={styles.dropdown}
+                          onPress={openRepeatCalendar}>
+                          <View style={styles.repeatDateValueWrap}>
+                            <Text style={styles.dropdownText}>{repeatUntilLabel}</Text>
+                            <Text style={styles.repeatHintText}>Tap to choose</Text>
+                          </View>
+                          <Ionicons name="calendar-outline" size={16} color={UI_COLORS.neutralTextSoft} />
+                        </Pressable>
+                      </View>
+                    ) : null}
+
+                    {repeatEndMode === 'afterCount' ? (
+                      <View style={styles.repeatUntilWrap}>
+                        <Text style={styles.label}>Occurrences</Text>
+                        <TextInput
+                          value={repeatOccurrenceCountText}
+                          onChangeText={onChangeRepeatOccurrenceCountText}
+                          placeholder="10"
+                          style={[styles.input, styles.repeatNumberInput]}
+                          keyboardType="number-pad"
+                          accessibilityLabel="Repeat occurrence count"
+                          placeholderTextColor={UI_COLORS.neutralTextSoft}
+                        />
+                      </View>
+                    ) : null}
+
+                    {repeatEndMode === 'never' ? (
+                      <Text style={styles.repeatHintText}>
+                        Creates a one-year rolling series from the start date.
+                      </Text>
+                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -467,6 +713,83 @@ export function BlockEditorModal({
                 </Pressable>
               );
             })}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={repeatCalendarVisible}
+        onRequestClose={() => setRepeatCalendarVisible(false)}>
+        <View style={styles.pickerBackdrop}>
+          <Pressable style={styles.pickerDismissLayer} onPress={() => setRepeatCalendarVisible(false)} />
+          <View style={styles.calendarCard}>
+            <View style={styles.calendarHeaderRow}>
+              <Pressable
+                accessibilityLabel="Previous month"
+                style={styles.calendarNavButton}
+                onPress={() =>
+                  setRepeatCalendarMonthStart(
+                    (current) => new Date(current.getFullYear(), current.getMonth() - 1, 1)
+                  )
+                }>
+                <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+              </Pressable>
+              <Text style={styles.pickerTitle}>{repeatCalendarMonthLabel}</Text>
+              <Pressable
+                accessibilityLabel="Next month"
+                style={styles.calendarNavButton}
+                onPress={() =>
+                  setRepeatCalendarMonthStart(
+                    (current) => new Date(current.getFullYear(), current.getMonth() + 1, 1)
+                  )
+                }>
+                <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+              </Pressable>
+            </View>
+            <View style={styles.calendarWeekdayRow}>
+              {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
+                <Text key={`weekday-${label}-${index}`} style={styles.calendarWeekdayText}>
+                  {label}
+                </Text>
+              ))}
+            </View>
+            <View style={styles.calendarGrid}>
+              {repeatCalendarCells.map((cell) => {
+                const selected = cell.dayKey === repeatUntilDayKey;
+                const isToday = cell.dayKey === todayDayKey;
+                const muted = !cell.inCurrentMonth;
+                return (
+                  <View key={cell.key} style={styles.calendarCell}>
+                    <Pressable
+                      accessibilityLabel={`Select ${cell.dayKey}`}
+                      style={[
+                        styles.calendarDayCard,
+                        muted && styles.calendarDayCardMuted,
+                        selected && styles.calendarDayCardSelected,
+                        isToday && styles.calendarDayCardToday,
+                      ]}
+                      onPress={() => {
+                        onChangeRepeatUntilDayKey(cell.dayKey);
+                        setRepeatCalendarVisible(false);
+                      }}>
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          muted && styles.calendarDayTextMuted,
+                          selected && styles.calendarDayTextSelected,
+                        ]}>
+                        {cell.date.getDate()}
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+            <Pressable style={styles.pickerDoneButton} onPress={() => setRepeatCalendarVisible(false)}>
+              <Text style={styles.pickerDoneText}>Done</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -722,8 +1045,80 @@ const styles = StyleSheet.create({
   repeatSection: {
     gap: 6,
   },
+  repeatDetailsWrap: {
+    gap: 8,
+  },
   repeatUntilWrap: {
     gap: 6,
+  },
+  repeatInlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  repeatNumberInput: {
+    width: 88,
+  },
+  repeatInlineLabel: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  repeatDateValueWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  weekdayChip: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: UI_COLORS.surface,
+  },
+  weekdayChipSelected: {
+    borderColor: UI_COLORS.neutralText,
+    backgroundColor: UI_COLORS.surfaceMuted,
+  },
+  weekdayChipText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  weekdayChipTextSelected: {
+    color: UI_COLORS.neutralText,
+  },
+  modeChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  modeChip: {
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: UI_COLORS.surface,
+  },
+  modeChipSelected: {
+    borderColor: UI_COLORS.neutralText,
+    backgroundColor: UI_COLORS.surfaceMuted,
+  },
+  modeChipText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modeChipTextSelected: {
+    color: UI_COLORS.neutralText,
   },
   repeatHintText: {
     color: UI_COLORS.neutralTextSoft,
@@ -907,11 +1302,90 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: UI_COLORS.neutralBorder,
   },
+  calendarCard: {
+    backgroundColor: UI_COLORS.surface,
+    borderRadius: UI_RADIUS.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+  },
   pickerTitle: {
     color: UI_COLORS.neutralText,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 2,
+  },
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  calendarNavButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarWeekdayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  calendarWeekdayText: {
+    width: `${100 / 7}%`,
+    textAlign: 'center',
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  calendarCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+  },
+  calendarDayCard: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: UI_COLORS.glassStroke,
+    backgroundColor: UI_COLORS.glassSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayCardMuted: {
+    borderColor: UI_COLORS.glassStrokeSoft,
+    backgroundColor: UI_COLORS.surfaceMuted,
+  },
+  calendarDayCardSelected: {
+    borderColor: UI_COLORS.accent,
+    backgroundColor: UI_COLORS.accentTint,
+  },
+  calendarDayCardToday: {
+    borderWidth: 1.5,
+    borderColor: UI_COLORS.accent,
+  },
+  calendarDayText: {
+    color: UI_COLORS.neutralText,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  calendarDayTextMuted: {
+    color: '#94A3B8',
+  },
+  calendarDayTextSelected: {
+    color: UI_COLORS.accent,
+    fontWeight: '700',
   },
   linkList: {
     maxHeight: 300,

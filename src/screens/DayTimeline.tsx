@@ -22,9 +22,27 @@ import { Block, PIXELS_PER_MINUTE as BASE_PIXELS_PER_MINUTE } from '@/src/compon
 import { BlockEditorModal } from '@/src/components/BlockEditorModal';
 import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryColor, getCategoryLabel } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
-import { deleteBlock, getBlocksForDay, getBlocksForDayRange, insertBlock, updateBlock } from '@/src/storage/blocksDb';
-import type { Block as TimeBlock, BlockRepeatPreset, Lane } from '@/src/types/blocks';
+import {
+  deleteBlock,
+  getBlocksForDay,
+  getBlocksForDayRange,
+  getBlocksForRecurrence,
+  getMetaValue,
+  insertBlock,
+  setMetaValue,
+  updateBlock,
+} from '@/src/storage/blocksDb';
+import type {
+  Block as TimeBlock,
+  BlockMonthlyRepeatMode,
+  BlockRepeatEndMode,
+  BlockRepeatPreset,
+  Lane,
+  SeriesEditScope,
+} from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
+import { computeExecutionScoreSummary } from '@/src/utils/executionScore';
+import { buildRepeatDayKeys, normalizeRepeatRule } from '@/src/utils/recurrence';
 import { clamp, formatHHMM, formatMinutesAmPm, parseHHMM, roundTo15 } from '@/src/utils/time';
 
 type ViewMode = 'compare' | 'planned' | 'actual';
@@ -39,7 +57,14 @@ type EditorState = {
   startText: string;
   endText: string;
   repeatPreset: BlockRepeatPreset;
+  repeatIntervalText: string;
+  repeatWeekDays: number[];
+  repeatMonthlyMode: BlockMonthlyRepeatMode;
+  repeatEndMode: BlockRepeatEndMode;
   repeatUntilDayKey: string;
+  repeatOccurrenceCountText: string;
+  repeatDirty: boolean;
+  isRecurringSource: boolean;
   linkedPlannedId: string | null;
   errorText: string | null;
 };
@@ -100,7 +125,15 @@ const NOW_COLOR = '#FF3B30';
 const NOW_LINE_CONNECT_OFFSET = 4;
 const MIN_TIMELINE_ZOOM = 0.8;
 const MAX_TIMELINE_ZOOM = 3;
-const PINCH_ZOOM_UPDATE_STEP = 0.015;
+const PINCH_ZOOM_UPDATE_STEP = 0.003;
+const PINCH_INTENT_LOCK_THRESHOLD_PX = 12;
+const PINCH_VERTICAL_INTENT_RATIO = 1.2;
+const PINCH_MIN_VERTICAL_SPAN_PX = 24;
+const PINCH_SCALE_SMOOTHING = 0.28;
+const PINCH_SCALE_DEADZONE = 0.006;
+const PINCH_FOCAL_SMOOTHING = 0.22;
+const PINCH_FOCAL_DEADZONE = 1.5;
+const PINCH_FOCAL_MAX_STEP = 6;
 const FEEDBACK_DURATION_MS = 1500;
 const CREATE_THRESHOLD_PX = 16;
 const CREATE_DELAY_MS = 260;
@@ -113,6 +146,13 @@ const CALENDAR_CELL_HEIGHT = 52;
 const CALENDAR_MONTH_LABEL_HEIGHT = 38;
 const CALENDAR_WEEKDAY_ROW_HEIGHT = 22;
 const CALENDAR_MONTH_BOTTOM_SPACE = 16;
+const DEFAULT_TIMELINE_ZOOM = 1;
+const TIMELINE_ZOOM_META_KEY = 'settings_timeline_zoom';
+const LEGACY_TIMELINE_ZOOM_META_KEYS = [
+  'settings_timeline_zoom_compare',
+  'settings_timeline_zoom_planned',
+  'settings_timeline_zoom_actual',
+] as const;
 
 const INITIAL_EDITOR_STATE: EditorState = {
   visible: false,
@@ -124,7 +164,14 @@ const INITIAL_EDITOR_STATE: EditorState = {
   startText: '08:00',
   endText: '09:00',
   repeatPreset: 'none',
+  repeatIntervalText: '1',
+  repeatWeekDays: [new Date().getDay()],
+  repeatMonthlyMode: 'dayOfMonth',
+  repeatEndMode: 'onDate',
   repeatUntilDayKey: getLocalDayKey(),
+  repeatOccurrenceCountText: '10',
+  repeatDirty: false,
+  isRecurringSource: false,
   linkedPlannedId: null,
   errorText: null,
 };
@@ -162,61 +209,89 @@ function parseDayKeyParam(input: string | string[] | undefined): string | null {
   return dayKeyToLocalDate(raw) ? raw : null;
 }
 
-function shouldIncludeRepeatDay(
-  dayOfWeek: number,
-  startDayOfWeek: number,
-  repeatPreset: BlockRepeatPreset
-): boolean {
-  if (repeatPreset === 'daily') {
-    return true;
+function parsePositiveInt(input: string, fallback: number): number {
+  const parsed = Number(input.trim());
+  if (!Number.isFinite(parsed)) {
+    return fallback;
   }
 
-  if (repeatPreset === 'weekdays') {
-    return dayOfWeek >= 1 && dayOfWeek <= 5;
-  }
-
-  return dayOfWeek === startDayOfWeek;
+  return Math.max(1, Math.round(parsed));
 }
 
-function buildRepeatDayKeys(
-  startDayKey: string,
-  repeatUntilDayKey: string,
-  repeatPreset: BlockRepeatPreset
-): string[] {
-  if (repeatPreset === 'none') {
-    return [startDayKey];
+function normalizeWeekDays(weekDays: number[], fallbackDay: number): number[] {
+  const unique = Array.from(
+    new Set(
+      weekDays.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    )
+  ).sort((a, b) => a - b);
+
+  return unique.length > 0 ? unique : [fallbackDay];
+}
+
+function createRecurrenceId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
   }
 
-  const startDate = dayKeyToLocalDate(startDayKey);
-  const repeatUntilDate = dayKeyToLocalDate(repeatUntilDayKey);
-  if (!startDate || !repeatUntilDate || repeatUntilDayKey < startDayKey) {
-    return [];
+  return `rec-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
+
+function promptSeriesScope(
+  action: 'edit' | 'delete',
+  onSelect: (scope: SeriesEditScope) => void
+): void {
+  const isEdit = action === 'edit';
+  const title = isEdit ? 'Edit recurring event?' : 'Delete recurring event?';
+  const description = isEdit
+    ? 'This is part of a repeating series. Which events do you want to change?'
+    : 'This is part of a repeating series. Which events do you want to delete?';
+  Alert.alert(
+    title,
+    description,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Only this one', onPress: () => onSelect('this') },
+      {
+        text: 'More options',
+        onPress: () => {
+          Alert.alert(title, 'Pick a broader scope:', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'This and all future ones', onPress: () => onSelect('following') },
+            { text: 'Entire series', onPress: () => onSelect('all') },
+          ]);
+        },
+      },
+    ]
+  );
+}
+
+function buildRepeatRuleFromEditorState(editorState: EditorState, startDayKey: string) {
+  const fallbackDay = dayKeyToLocalDate(startDayKey)?.getDay() ?? new Date().getDay();
+  return normalizeRepeatRule(
+    {
+      preset: editorState.repeatPreset,
+      interval: parsePositiveInt(editorState.repeatIntervalText, 1),
+      weekDays: normalizeWeekDays(editorState.repeatWeekDays, fallbackDay),
+      monthlyMode: editorState.repeatMonthlyMode,
+      endMode: editorState.repeatEndMode,
+      endDayKey: editorState.repeatUntilDayKey.trim(),
+      occurrenceCount: parsePositiveInt(editorState.repeatOccurrenceCountText, 10),
+    },
+    startDayKey
+  );
+}
+
+function parseTimelineZoom(rawValue: string | null, fallback: number): number {
+  if (!rawValue) {
+    return fallback;
   }
 
-  const startDayOfWeek = startDate.getDay();
-  const selectedDayKeys: string[] = [];
-  let cursorDayKey = startDayKey;
-
-  while (cursorDayKey <= repeatUntilDayKey) {
-    const cursorDate = dayKeyToLocalDate(cursorDayKey);
-
-    if (!cursorDate) {
-      break;
-    }
-
-    if (shouldIncludeRepeatDay(cursorDate.getDay(), startDayOfWeek, repeatPreset)) {
-      selectedDayKeys.push(cursorDayKey);
-    }
-
-    const nextDayKey = shiftDayKey(cursorDayKey, 1);
-    if (nextDayKey === cursorDayKey) {
-      break;
-    }
-
-    cursorDayKey = nextDayKey;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
   }
 
-  return selectedDayKeys;
+  return clamp(parsed, MIN_TIMELINE_ZOOM, MAX_TIMELINE_ZOOM);
 }
 
 function getMonthStart(date: Date): Date {
@@ -364,7 +439,7 @@ function getCategoryKey(block: TimeBlock): string {
   return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
 }
 
-function isExcludedFromMetrics(block: TimeBlock): boolean {
+function isExcludedFromCategoryVariance(block: TimeBlock): boolean {
   const key = getCategoryKey(block);
   return key === 'other' || key === 'none';
 }
@@ -444,6 +519,11 @@ export default function DayTimeline() {
     planned: true,
     actual: false,
   });
+  const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
+    ? 'compare'
+    : laneVisibility.planned
+      ? 'planned'
+      : 'actual';
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [calendarScoreByDay, setCalendarScoreByDay] = useState<Record<string, number | null>>({});
@@ -451,8 +531,9 @@ export default function DayTimeline() {
   const [focusedPlannedId, setFocusedPlannedId] = useState<string | null>(null);
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const [isPinching, setIsPinching] = useState(false);
   const [dragPreviewById, setDragPreviewById] = useState<Record<string, { startMin: number; endMin: number }>>({});
-  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [timelineZoom, setTimelineZoom] = useState(DEFAULT_TIMELINE_ZOOM);
   const draftCreateRef = useRef<DraftCreateState | null>(null);
   const createHapticKeyRef = useRef<string | null>(null);
   const draftCandidateRef = useRef<DraftCandidate | null>(null);
@@ -470,6 +551,19 @@ export default function DayTimeline() {
   const timelineZoomRef = useRef(1);
   const pinchStartZoomRef = useRef(1);
   const pinchLastAppliedZoomRef = useRef(1);
+  const pinchStartDistanceXRef = useRef<number | null>(null);
+  const pinchStartDistanceYRef = useRef<number | null>(null);
+  const pinchVerticalScaleRef = useRef(1);
+  const pinchIntentLockedRef = useRef(false);
+  const pinchVerticalIntentRef = useRef(false);
+  const pinchPendingGestureScaleRef = useRef(1);
+  const pinchPendingFocalYRef = useRef<number | null>(null);
+  const pinchSmoothedFocalYRef = useRef<number | null>(null);
+  const pinchTrackedFocalViewportYRef = useRef<number | null>(null);
+  const pinchAnchorMinuteRef = useRef<number | null>(null);
+  const pinchRafIdRef = useRef<number | null>(null);
+  const isPinchingRef = useRef(false);
+  const zoomPrefsHydratedRef = useRef(false);
   const pendingZoomScrollYRef = useRef<number | null>(null);
   const autoScrolledDayKeyRef = useRef<string | null>(null);
   const pendingJumpToNowRef = useRef(false);
@@ -541,18 +635,6 @@ export default function DayTimeline() {
     },
     [sortedBlocks]
   );
-  const metricBlocks = useMemo(
-    () => sortedBlocks.filter((block) => !isExcludedFromMetrics(block)),
-    [sortedBlocks]
-  );
-  const metricPlannedBlocks = useMemo(
-    () => sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned')),
-    [metricBlocks]
-  );
-  const metricActualBlocks = useMemo(
-    () => sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual')),
-    [metricBlocks]
-  );
   const plannedLinkOptions = useMemo(
     () =>
       plannedBlocks.map((block) => ({
@@ -563,6 +645,13 @@ export default function DayTimeline() {
         tags: block.tags,
       })),
     [plannedBlocks]
+  );
+  const editingBlock = useMemo(
+    () =>
+      editorState.mode === 'edit' && editorState.blockId
+        ? sortedBlocks.find((block) => block.id === editorState.blockId) ?? null
+        : null,
+    [editorState.blockId, editorState.mode, sortedBlocks]
   );
   const categoryOptions = settings.categories;
   const visibleCategoryIdSet = useMemo(
@@ -588,17 +677,19 @@ export default function DayTimeline() {
   const categoryVarianceRows = useMemo<CategoryVarianceRow[]>(() => {
     const totals = new Map<string, { planned: number; actual: number }>();
 
-    metricPlannedBlocks.forEach((block) => {
-      const key = getCategoryKey(block);
-      const value = totals.get(key) ?? { planned: 0, actual: 0 };
-      value.planned += Math.max(0, block.endMin - block.startMin);
-      totals.set(key, value);
-    });
+    sortedBlocks.forEach((block) => {
+      if (isExcludedFromCategoryVariance(block)) {
+        return;
+      }
 
-    metricActualBlocks.forEach((block) => {
       const key = getCategoryKey(block);
       const value = totals.get(key) ?? { planned: 0, actual: 0 };
-      value.actual += Math.max(0, block.endMin - block.startMin);
+      const duration = Math.max(0, block.endMin - block.startMin);
+      if (block.lane === 'planned') {
+        value.planned += duration;
+      } else {
+        value.actual += duration;
+      }
       totals.set(key, value);
     });
 
@@ -613,51 +704,30 @@ export default function DayTimeline() {
       deltaPercent: computeDeltaPercent(value.actual, value.planned),
     }))
       .sort((a, b) => Math.abs(b.deltaMinutes) - Math.abs(a.deltaMinutes) || a.label.localeCompare(b.label));
-  }, [categoryColorMap, categoryLabelMap, metricActualBlocks, metricPlannedBlocks]);
+  }, [categoryColorMap, categoryLabelMap, sortedBlocks]);
   const nowMinute = clockMinute;
-
-  const { plannedTotalMin, doneTotalMin } = useMemo(() => {
-    const totals = metricBlocks.reduce(
-      (acc, block) => {
-        const duration = Math.max(0, block.endMin - block.startMin);
-
-        if (block.lane === 'planned') {
-          acc.plannedTotalMin += duration;
-        } else {
-          acc.doneTotalMin += duration;
-        }
-
-        return acc;
-      },
-      { plannedTotalMin: 0, doneTotalMin: 0 }
-    );
-
-    return {
-      plannedTotalMin: totals.plannedTotalMin,
-      doneTotalMin: totals.doneTotalMin,
-    };
-  }, [metricBlocks]);
+  const executionSummary = useMemo(
+    () => computeExecutionScoreSummary(sortedBlocks),
+    [sortedBlocks]
+  );
 
   const scorecardMetrics = useMemo<ScorecardMetrics>(() => {
     if (isFutureDay) {
       return {
-        plannedMinutes: plannedTotalMin,
-        doneMinutes: doneTotalMin,
-        executionDoneMinutes: doneTotalMin,
+        plannedMinutes: executionSummary.plannedMinutes,
+        doneMinutes: executionSummary.doneMinutes,
+        executionDoneMinutes: executionSummary.executionDoneMinutes,
         executionScorePercent: null,
       };
     }
 
-    const executionDoneMinutes = doneTotalMin;
-    const executionScoreRaw = plannedTotalMin > 0 ? (executionDoneMinutes / plannedTotalMin) * 100 : 0;
-
     return {
-      plannedMinutes: plannedTotalMin,
-      doneMinutes: doneTotalMin,
-      executionDoneMinutes,
-      executionScorePercent: Math.round(executionScoreRaw),
+      plannedMinutes: executionSummary.plannedMinutes,
+      doneMinutes: executionSummary.doneMinutes,
+      executionDoneMinutes: executionSummary.executionDoneMinutes,
+      executionScorePercent: executionSummary.scorePercent ?? 0,
     };
-  }, [doneTotalMin, isFutureDay, plannedTotalMin]);
+  }, [executionSummary, isFutureDay]);
 
   useEffect(() => {
     if (!calendarVisible || calendarMonths.length === 0) {
@@ -702,23 +772,8 @@ export default function DayTimeline() {
             }
 
             const dayBlocks = blocksByDay[cell.dayKey] ?? [];
-            let plannedMinutes = 0;
-            let doneMinutes = 0;
-
-            for (const block of dayBlocks) {
-              if (isExcludedFromMetrics(block)) {
-                continue;
-              }
-
-              const duration = Math.max(0, block.endMin - block.startMin);
-              if (block.lane === 'planned') {
-                plannedMinutes += duration;
-              } else {
-                doneMinutes += duration;
-              }
-            }
-
-            nextScores[cell.dayKey] = plannedMinutes > 0 ? Math.round((doneMinutes / plannedMinutes) * 100) : null;
+            const daySummary = computeExecutionScoreSummary(dayBlocks);
+            nextScores[cell.dayKey] = daySummary.scorePercent;
           }
         }
 
@@ -772,7 +827,11 @@ export default function DayTimeline() {
   }, [pixelsPerMinute]);
 
   const applyTimelineZoom = useCallback(
-    (nextZoom: number, focalAbsoluteY: number | null) => {
+    (
+      nextZoom: number,
+      focalViewportY: number | null,
+      lockedAnchorMinute: number | null = null
+    ) => {
       const clampedZoom = clamp(nextZoom, MIN_TIMELINE_ZOOM, MAX_TIMELINE_ZOOM);
       const previousZoom = timelineZoomRef.current;
 
@@ -785,21 +844,161 @@ export default function DayTimeline() {
       const viewportHeight = timelineViewportHeightRef.current;
       const fallbackAnchor = viewportHeight > 0 ? viewportHeight / 2 : 0;
       const anchorViewportY =
-        focalAbsoluteY == null || !Number.isFinite(focalAbsoluteY)
+        focalViewportY == null || !Number.isFinite(focalViewportY)
           ? fallbackAnchor
-          : clamp(focalAbsoluteY - timelineViewportTopRef.current, 0, Math.max(viewportHeight, 0));
+          : clamp(focalViewportY, 0, Math.max(viewportHeight, 0));
+      const baseScrollY = pendingZoomScrollYRef.current ?? timelineScrollOffsetYRef.current;
       const minuteAtAnchor =
-        (timelineScrollOffsetYRef.current + anchorViewportY) / Math.max(previousPixelsPerMinute, 0.001);
+        lockedAnchorMinute != null && Number.isFinite(lockedAnchorMinute)
+          ? clamp(lockedAnchorMinute, 0, MINUTES_PER_DAY)
+          : (baseScrollY + anchorViewportY) / Math.max(previousPixelsPerMinute, 0.001);
       const nextTimelineHeight = MINUTES_PER_DAY * nextPixelsPerMinute + insets.bottom;
       const maxScrollY = Math.max(0, nextTimelineHeight - viewportHeight);
       const targetScrollY = clamp(minuteAtAnchor * nextPixelsPerMinute - anchorViewportY, 0, maxScrollY);
 
       timelineZoomRef.current = clampedZoom;
       pendingZoomScrollYRef.current = targetScrollY;
+      timelineScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
+      // Keep anchor math stable across rapid pinch updates before onScroll fires.
+      timelineScrollOffsetYRef.current = targetScrollY;
       setTimelineZoom(clampedZoom);
     },
     [insets.bottom]
   );
+
+  const persistTimelineZoom = useCallback((zoom: number) => {
+    if (!zoomPrefsHydratedRef.current) {
+      return;
+    }
+
+    const clampedZoom = clamp(zoom, MIN_TIMELINE_ZOOM, MAX_TIMELINE_ZOOM);
+    void setMetaValue(TIMELINE_ZOOM_META_KEY, String(clampedZoom));
+  }, []);
+
+  const resetPinchTracking = useCallback(() => {
+    pinchStartDistanceXRef.current = null;
+    pinchStartDistanceYRef.current = null;
+    pinchVerticalScaleRef.current = 1;
+    pinchIntentLockedRef.current = false;
+    pinchVerticalIntentRef.current = false;
+    pinchSmoothedFocalYRef.current = null;
+    pinchTrackedFocalViewportYRef.current = null;
+    pinchAnchorMinuteRef.current = null;
+  }, []);
+
+  const trackPinchTouchData = useCallback(
+    (allTouches: { id: number; absoluteX: number; absoluteY: number }[]) => {
+      if (allTouches.length !== 2) {
+        pinchTrackedFocalViewportYRef.current = null;
+        return;
+      }
+
+      const [firstTouch, secondTouch] = [...allTouches]
+        .sort((a, b) => a.id - b.id)
+        .slice(0, 2);
+
+      const distanceX = Math.abs(firstTouch.absoluteX - secondTouch.absoluteX);
+      const distanceY = Math.abs(firstTouch.absoluteY - secondTouch.absoluteY);
+      const normalizedDistanceY = Math.max(distanceY, PINCH_MIN_VERTICAL_SPAN_PX);
+      pinchTrackedFocalViewportYRef.current =
+        (firstTouch.absoluteY + secondTouch.absoluteY) / 2 - timelineViewportTopRef.current;
+
+      if (pinchStartDistanceXRef.current === null || pinchStartDistanceYRef.current === null) {
+        pinchStartDistanceXRef.current = Math.max(distanceX, 1);
+        pinchStartDistanceYRef.current = normalizedDistanceY;
+        pinchVerticalScaleRef.current = 1;
+        pinchIntentLockedRef.current = false;
+        pinchVerticalIntentRef.current = false;
+        return;
+      }
+
+      const startX = pinchStartDistanceXRef.current;
+      const startY = pinchStartDistanceYRef.current;
+      const horizontalDelta = Math.abs(distanceX - startX);
+      const verticalDelta = Math.abs(normalizedDistanceY - startY);
+
+      if (
+        !pinchIntentLockedRef.current &&
+        horizontalDelta + verticalDelta >= PINCH_INTENT_LOCK_THRESHOLD_PX
+      ) {
+        pinchIntentLockedRef.current = true;
+        pinchVerticalIntentRef.current =
+          verticalDelta >= horizontalDelta * PINCH_VERTICAL_INTENT_RATIO;
+      }
+
+      if (pinchIntentLockedRef.current && pinchVerticalIntentRef.current) {
+        const rawScale = normalizedDistanceY / Math.max(startY, PINCH_MIN_VERTICAL_SPAN_PX);
+        const previousScale = pinchVerticalScaleRef.current;
+        const smoothedScale = previousScale + (rawScale - previousScale) * PINCH_SCALE_SMOOTHING;
+        pinchVerticalScaleRef.current =
+          Math.abs(smoothedScale - 1) < PINCH_SCALE_DEADZONE ? 1 : smoothedScale;
+        return;
+      }
+
+      pinchVerticalScaleRef.current = 1;
+    },
+    []
+  );
+
+  const getPinchScaleAndFocalY = useCallback(
+    (fallbackScale: number, fallbackFocalY: number): { scale: number; focalY: number; verticalIntent: boolean } => {
+      const trackedFocalY = pinchTrackedFocalViewportYRef.current;
+      const rawFocalY =
+        Number.isFinite(fallbackFocalY)
+          ? fallbackFocalY
+          : trackedFocalY != null && Number.isFinite(trackedFocalY)
+            ? trackedFocalY
+            : timelineViewportHeightRef.current / 2;
+      const previousFocalY = pinchSmoothedFocalYRef.current;
+      let focalY = rawFocalY;
+      if (previousFocalY != null) {
+        const delta = rawFocalY - previousFocalY;
+        if (Math.abs(delta) <= PINCH_FOCAL_DEADZONE) {
+          focalY = previousFocalY;
+        } else {
+          const smoothedDelta = delta * PINCH_FOCAL_SMOOTHING;
+          const clampedDelta = clamp(smoothedDelta, -PINCH_FOCAL_MAX_STEP, PINCH_FOCAL_MAX_STEP);
+          focalY = previousFocalY + clampedDelta;
+        }
+      }
+      pinchSmoothedFocalYRef.current = focalY;
+      if (!pinchIntentLockedRef.current || !pinchVerticalIntentRef.current) {
+        return {
+          scale: 1,
+          focalY,
+          verticalIntent: false,
+        };
+      }
+
+      const measuredScale =
+        Number.isFinite(pinchVerticalScaleRef.current) && pinchVerticalScaleRef.current > 0
+          ? pinchVerticalScaleRef.current
+          : fallbackScale;
+
+      return {
+        scale: measuredScale,
+        focalY,
+        verticalIntent: true,
+      };
+    },
+    []
+  );
+
+  const ensurePinchAnchorMinute = useCallback((focalY: number): number => {
+    const existingAnchorMinute = pinchAnchorMinuteRef.current;
+    if (existingAnchorMinute != null && Number.isFinite(existingAnchorMinute)) {
+      return existingAnchorMinute;
+    }
+
+    const startPixelsPerMinute = BASE_PIXELS_PER_MINUTE * Math.max(pinchStartZoomRef.current, 0.001);
+    const anchorMinute = clamp(
+      (timelineScrollOffsetYRef.current + focalY) / Math.max(startPixelsPerMinute, 0.001),
+      0,
+      MINUTES_PER_DAY
+    );
+    pinchAnchorMinuteRef.current = anchorMinute;
+    return anchorMinute;
+  }, []);
 
   const handlePinchZoomUpdate = useCallback(
     (gestureScale: number, focalY: number) => {
@@ -818,9 +1017,10 @@ export default function DayTimeline() {
       }
 
       pinchLastAppliedZoomRef.current = nextZoom;
-      applyTimelineZoom(nextZoom, focalY);
+      const anchorMinute = ensurePinchAnchorMinute(focalY);
+      applyTimelineZoom(nextZoom, focalY, anchorMinute);
     },
-    [applyTimelineZoom]
+    [applyTimelineZoom, ensurePinchAnchorMinute]
   );
 
   const handlePinchZoomFinalize = useCallback(
@@ -835,10 +1035,56 @@ export default function DayTimeline() {
         MAX_TIMELINE_ZOOM
       );
       pinchLastAppliedZoomRef.current = nextZoom;
-      applyTimelineZoom(nextZoom, focalY);
+      const anchorMinute = ensurePinchAnchorMinute(focalY);
+      applyTimelineZoom(nextZoom, focalY, anchorMinute);
+      persistTimelineZoom(nextZoom);
     },
-    [applyTimelineZoom]
+    [applyTimelineZoom, ensurePinchAnchorMinute, persistTimelineZoom]
   );
+
+  const applyQueuedPinchZoom = useCallback(() => {
+    pinchRafIdRef.current = null;
+
+    if (!isPinchingRef.current) {
+      return;
+    }
+
+    const focalY = pinchPendingFocalYRef.current;
+    if (focalY == null) {
+      return;
+    }
+
+    handlePinchZoomUpdate(pinchPendingGestureScaleRef.current, focalY);
+  }, [handlePinchZoomUpdate]);
+
+  const queuePinchZoomUpdate = useCallback(
+    (gestureScale: number, focalY: number) => {
+      pinchPendingGestureScaleRef.current = gestureScale;
+      pinchPendingFocalYRef.current = focalY;
+
+      if (pinchRafIdRef.current !== null) {
+        return;
+      }
+
+      pinchRafIdRef.current = requestAnimationFrame(() => {
+        applyQueuedPinchZoom();
+      });
+    },
+    [applyQueuedPinchZoom]
+  );
+
+  const cancelQueuedPinchZoom = useCallback(() => {
+    const rafId = pinchRafIdRef.current;
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      pinchRafIdRef.current = null;
+    }
+  }, []);
+
+  const setPinchActive = useCallback((active: boolean) => {
+    isPinchingRef.current = active;
+    setIsPinching(active);
+  }, []);
 
   const pinchTimelineGesture = useMemo(
     () =>
@@ -846,20 +1092,109 @@ export default function DayTimeline() {
         .enabled(activeDragId === null && !isCreatingDraft)
         .runOnJS(true)
         .onBegin(() => {
+          setPinchActive(true);
           pinchStartZoomRef.current = timelineZoomRef.current;
           pinchLastAppliedZoomRef.current = timelineZoomRef.current;
+          pinchPendingGestureScaleRef.current = 1;
+          pinchPendingFocalYRef.current = null;
+          pinchAnchorMinuteRef.current = null;
+          cancelQueuedPinchZoom();
+          resetPinchTracking();
+        })
+        .onTouchesDown((event) => {
+          trackPinchTouchData(event.allTouches);
+        })
+        .onTouchesMove((event) => {
+          trackPinchTouchData(event.allTouches);
+        })
+        .onTouchesCancelled(() => {
+          cancelQueuedPinchZoom();
+          resetPinchTracking();
+          setPinchActive(false);
         })
         .onUpdate((event) => {
-          handlePinchZoomUpdate(event.scale, event.focalY);
+          const { scale, focalY, verticalIntent } = getPinchScaleAndFocalY(event.scale, event.focalY);
+          if (!verticalIntent) {
+            return;
+          }
+
+          if (Math.abs(scale - 1) < PINCH_SCALE_DEADZONE) {
+            return;
+          }
+
+          queuePinchZoomUpdate(scale, focalY);
         })
         .onEnd((event) => {
-          handlePinchZoomFinalize(event.scale, event.focalY);
+          const { scale, focalY, verticalIntent } = getPinchScaleAndFocalY(event.scale, event.focalY);
+          cancelQueuedPinchZoom();
+          if (verticalIntent) {
+            handlePinchZoomFinalize(scale, focalY);
+          }
+          resetPinchTracking();
+          setPinchActive(false);
+        })
+        .onFinalize(() => {
+          cancelQueuedPinchZoom();
+          resetPinchTracking();
+          setPinchActive(false);
         }),
-    [activeDragId, handlePinchZoomFinalize, handlePinchZoomUpdate, isCreatingDraft]
+    [
+      activeDragId,
+      cancelQueuedPinchZoom,
+      getPinchScaleAndFocalY,
+      handlePinchZoomFinalize,
+      isCreatingDraft,
+      queuePinchZoomUpdate,
+      resetPinchTracking,
+      setPinchActive,
+      trackPinchTouchData,
+    ]
   );
 
   const closeEditor = useCallback(() => {
     setEditorState((current) => ({ ...current, visible: false, errorText: null }));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cancelQueuedPinchZoom();
+    };
+  }, [cancelQueuedPinchZoom]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTimelineZoomPrefs = async () => {
+      try {
+        const [sharedRaw, legacyCompareRaw, legacyPlannedRaw, legacyActualRaw] = await Promise.all([
+          getMetaValue(TIMELINE_ZOOM_META_KEY),
+          getMetaValue(LEGACY_TIMELINE_ZOOM_META_KEYS[0]),
+          getMetaValue(LEGACY_TIMELINE_ZOOM_META_KEYS[1]),
+          getMetaValue(LEGACY_TIMELINE_ZOOM_META_KEYS[2]),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        const legacyRaw = legacyCompareRaw ?? legacyPlannedRaw ?? legacyActualRaw;
+        const nextZoom = parseTimelineZoom(sharedRaw ?? legacyRaw, DEFAULT_TIMELINE_ZOOM);
+        setTimelineZoom(nextZoom);
+        if (!sharedRaw && legacyRaw) {
+          void setMetaValue(TIMELINE_ZOOM_META_KEY, String(nextZoom));
+        }
+      } finally {
+        if (!cancelled) {
+          zoomPrefsHydratedRef.current = true;
+        }
+      }
+    };
+
+    void loadTimelineZoomPrefs();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -951,6 +1286,10 @@ export default function DayTimeline() {
   }, [dayKey, nowMinute, todayDayKey]);
 
   useEffect(() => {
+    if (isPinchingRef.current) {
+      return;
+    }
+
     if (pendingZoomScrollYRef.current == null) {
       return;
     }
@@ -965,7 +1304,7 @@ export default function DayTimeline() {
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [syncTimelineViewportTop, timelineZoom]);
+  }, [isPinching, syncTimelineViewportTop, timelineZoom]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1003,6 +1342,7 @@ export default function DayTimeline() {
       const defaultStart = getNextQuarterMinuteFromNow();
       const startMin = presetRange?.startMin ?? clamp(roundTo15(defaultStart), 0, MINUTES_PER_DAY - 15);
       const endMin = presetRange?.endMin ?? Math.min(MINUTES_PER_DAY, startMin + 60);
+      const dayOfWeek = dayKeyToLocalDate(dayKey)?.getDay() ?? new Date().getDay();
 
       setEditorState({
         visible: true,
@@ -1014,7 +1354,14 @@ export default function DayTimeline() {
         startText: formatHHMM(startMin),
         endText: formatHHMM(endMin),
         repeatPreset: 'none',
+        repeatIntervalText: '1',
+        repeatWeekDays: [dayOfWeek],
+        repeatMonthlyMode: 'dayOfMonth',
+        repeatEndMode: 'onDate',
         repeatUntilDayKey: dayKey,
+        repeatOccurrenceCountText: '10',
+        repeatDirty: false,
+        isRecurringSource: false,
         linkedPlannedId: null,
         errorText: null,
       });
@@ -1023,6 +1370,8 @@ export default function DayTimeline() {
   );
 
   const openEditEditor = useCallback((block: TimeBlock) => {
+    const dayOfWeek = dayKeyToLocalDate(dayKey)?.getDay() ?? 0;
+    const repeatRule = block.repeatRule ?? null;
     setEditorState({
       visible: true,
       mode: 'edit',
@@ -1032,8 +1381,15 @@ export default function DayTimeline() {
       tags: toSingleCategory(block.tags),
       startText: formatHHMM(block.startMin),
       endText: formatHHMM(block.endMin),
-      repeatPreset: 'none',
-      repeatUntilDayKey: dayKey,
+      repeatPreset: block.recurrenceId ? repeatRule?.preset ?? 'weekly' : 'none',
+      repeatIntervalText: String(repeatRule?.interval ?? 1),
+      repeatWeekDays: normalizeWeekDays(repeatRule?.weekDays ?? [dayOfWeek], dayOfWeek),
+      repeatMonthlyMode: repeatRule?.monthlyMode ?? 'dayOfMonth',
+      repeatEndMode: repeatRule?.endMode ?? 'onDate',
+      repeatUntilDayKey: repeatRule?.endDayKey ?? dayKey,
+      repeatOccurrenceCountText: String(repeatRule?.occurrenceCount ?? 10),
+      repeatDirty: false,
+      isRecurringSource: Boolean(block.recurrenceId),
       linkedPlannedId: block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
       errorText: null,
     });
@@ -1240,27 +1596,70 @@ export default function DayTimeline() {
       return;
     }
 
-    const targetId = editorState.blockId;
+    const existing = sortedBlocks.find((block) => block.id === editorState.blockId);
+    if (!existing) {
+      return;
+    }
+
+    const runDelete = (scope: SeriesEditScope) => {
+      void (async () => {
+        try {
+          if (scope === 'this' || !existing.recurrenceId) {
+            await deleteBlock(existing.id);
+            setBlocks((current) => current.filter((block) => block.id !== existing.id));
+            closeEditor();
+            return;
+          }
+
+          const recurrenceBlocks = await getBlocksForRecurrence(existing.recurrenceId);
+          const targetBlocks =
+            scope === 'all'
+              ? recurrenceBlocks
+              : recurrenceBlocks.filter((entry) => {
+                  if (existing.recurrenceIndex && entry.block.recurrenceIndex) {
+                    return entry.block.recurrenceIndex >= existing.recurrenceIndex;
+                  }
+                  return entry.dayKey >= dayKey;
+                });
+
+          if (targetBlocks.length === 0) {
+            closeEditor();
+            return;
+          }
+
+          await Promise.all(targetBlocks.map((entry) => deleteBlock(entry.block.id)));
+          const removedIdSet = new Set(targetBlocks.map((entry) => entry.block.id));
+          setBlocks((current) => current.filter((block) => !removedIdSet.has(block.id)));
+          closeEditor();
+        } catch {
+          Alert.alert('Storage error', 'Could not delete block.');
+        }
+      })();
+    };
+
+    if (existing.recurrenceId) {
+      promptSeriesScope('delete', (scope) => {
+        Alert.alert('Delete block', 'Are you sure you want to delete this selection?', [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => runDelete(scope),
+          },
+        ]);
+      });
+      return;
+    }
 
     Alert.alert('Delete block', 'Are you sure you want to delete this block?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            try {
-              await deleteBlock(targetId);
-              setBlocks((current) => current.filter((block) => block.id !== targetId));
-              closeEditor();
-            } catch {
-              Alert.alert('Storage error', 'Could not delete block.');
-            }
-          })();
-        },
+        onPress: () => runDelete('this'),
       },
     ]);
-  }, [closeEditor, editorState.blockId, editorState.mode]);
+  }, [closeEditor, dayKey, editorState.blockId, editorState.mode, sortedBlocks]);
 
   const copyPlannedBlockToDone = useCallback(
     (plannedBlockId: string, options?: { closeEditorOnSuccess?: boolean }) => {
@@ -1411,6 +1810,7 @@ export default function DayTimeline() {
 
     const startMin = parsedStart;
     const endMin = parsedEnd;
+    const nextTags = toSingleCategory(editorState.tags);
     const normalizedLinkedPlannedId =
       editorState.linkedPlannedId && plannedLinkOptions.some((option) => option.id === editorState.linkedPlannedId)
         ? editorState.linkedPlannedId
@@ -1437,69 +1837,237 @@ export default function DayTimeline() {
         return;
       }
 
-      if (hasOverlap(existing.lane, existing.id, startMin, endMin, sortedBlocks)) {
-        Alert.alert('Invalid time', 'Time overlaps another block.');
-        return;
-      }
+      const runEdit = (scope: SeriesEditScope) => {
+        void (async () => {
+          try {
+            const linkedPlannedIdForSingle = editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined;
 
-      const updatedBlock: TimeBlock = {
-        ...existing,
-        title,
-        tags: toSingleCategory(editorState.tags),
-        startMin,
-        endMin,
-        linkedPlannedId: existing.lane === 'actual' ? normalizedLinkedPlannedId : undefined,
-      };
+            if (scope === 'this' || !existing.recurrenceId) {
+              const updatedBlock: TimeBlock = {
+                ...existing,
+                lane: editorState.lane,
+                title,
+                tags: nextTags,
+                startMin,
+                endMin,
+                linkedPlannedId: linkedPlannedIdForSingle,
+                recurrenceId: existing.recurrenceId ? null : existing.recurrenceId ?? null,
+                recurrenceIndex: existing.recurrenceId ? null : existing.recurrenceIndex ?? null,
+                repeatRule: null,
+              };
 
-      void (async () => {
-        try {
-          await updateBlock(updatedBlock, dayKey);
-          setBlocks((current) =>
-            sortByStartMin(current.map((block) => (block.id === updatedBlock.id ? updatedBlock : block)))
-          );
-          setDragPreviewById((current) => {
-            if (!(updatedBlock.id in current)) {
-              return current;
+              if (hasOverlap(updatedBlock.lane, existing.id, startMin, endMin, sortedBlocks)) {
+                Alert.alert('Invalid time', 'Time overlaps another block.');
+                return;
+              }
+
+              await updateBlock(updatedBlock, dayKey);
+              const refreshedBlocks = await getBlocksForDay(dayKey);
+              setBlocks(sortByStartMin(refreshedBlocks));
+              setDragPreviewById((current) => {
+                if (!(updatedBlock.id in current)) {
+                  return current;
+                }
+
+                const next = { ...current };
+                delete next[updatedBlock.id];
+                return next;
+              });
+              void triggerSuccessHaptic();
+              closeEditor();
+              return;
             }
 
-            const next = { ...current };
-            delete next[updatedBlock.id];
-            return next;
-          });
-          const refreshedBlocks = await getBlocksForDay(dayKey);
-          setBlocks(sortByStartMin(refreshedBlocks));
-          void triggerSuccessHaptic();
-          closeEditor();
-        } catch {
-          Alert.alert('Storage error', 'Could not save block changes.');
-        }
-      })();
+            const recurrenceBlocks = await getBlocksForRecurrence(existing.recurrenceId);
+            const targetBlocks =
+              scope === 'all'
+                ? recurrenceBlocks
+                : recurrenceBlocks.filter((entry) => {
+                    if (existing.recurrenceIndex && entry.block.recurrenceIndex) {
+                      return entry.block.recurrenceIndex >= existing.recurrenceIndex;
+                    }
+                    return entry.dayKey >= dayKey;
+                  });
+
+            if (targetBlocks.length === 0) {
+              closeEditor();
+              return;
+            }
+
+            const shouldRebuildSeries = editorState.repeatDirty;
+
+            if (!shouldRebuildSeries) {
+              const dayBlocksCache = new Map<string, TimeBlock[]>();
+              const updates: Array<{ dayKey: string; block: TimeBlock }> = [];
+              const nextRecurrenceId = scope === 'following' ? createRecurrenceId() : existing.recurrenceId;
+              const repeatRule = existing.repeatRule ?? null;
+
+              for (const target of targetBlocks) {
+                let dayBlocks = dayBlocksCache.get(target.dayKey);
+                if (!dayBlocks) {
+                  dayBlocks = target.dayKey === dayKey ? sortedBlocks : await getBlocksForDay(target.dayKey);
+                  dayBlocksCache.set(target.dayKey, dayBlocks);
+                }
+
+                const updatedBlock: TimeBlock = {
+                  ...target.block,
+                  lane: editorState.lane,
+                  title,
+                  tags: nextTags,
+                  startMin,
+                  endMin,
+                  linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                  recurrenceId: nextRecurrenceId,
+                  recurrenceIndex: target.block.recurrenceIndex ?? null,
+                  repeatRule,
+                };
+
+                if (hasOverlap(updatedBlock.lane, updatedBlock.id, startMin, endMin, dayBlocks)) {
+                  Alert.alert('Invalid time', `One or more events would overlap on ${target.dayKey}.`);
+                  return;
+                }
+
+                updates.push({ dayKey: target.dayKey, block: updatedBlock });
+                const nextDayBlocks = sortByStartMin(
+                  dayBlocks.map((block) => (block.id === updatedBlock.id ? updatedBlock : block))
+                );
+                dayBlocksCache.set(target.dayKey, nextDayBlocks);
+              }
+
+              for (const update of updates) {
+                await updateBlock(update.block, update.dayKey);
+              }
+
+              const refreshedBlocks = await getBlocksForDay(dayKey);
+              setBlocks(sortByStartMin(refreshedBlocks));
+              void triggerSuccessHaptic();
+              closeEditor();
+              return;
+            }
+
+            const anchorEntry =
+              scope === 'all'
+                ? recurrenceBlocks[0]
+                : targetBlocks.find((entry) => entry.block.id === existing.id) ?? targetBlocks[0];
+            const anchorDayKey = anchorEntry.dayKey;
+            const recurringRule =
+              editorState.repeatPreset === 'none'
+                ? null
+                : buildRepeatRuleFromEditorState(editorState, anchorDayKey);
+
+            if (recurringRule && recurringRule.endMode === 'onDate') {
+              const rawEndDayKey = editorState.repeatUntilDayKey.trim();
+              if (!dayKeyToLocalDate(rawEndDayKey)) {
+                setEditorState((current) => ({
+                  ...current,
+                  errorText: 'Repeat until must be a valid date (YYYY-MM-DD).',
+                }));
+                return;
+              }
+              if (recurringRule.endDayKey < anchorDayKey) {
+                setEditorState((current) => ({
+                  ...current,
+                  errorText: 'Repeat until cannot be before the series start.',
+                }));
+                return;
+              }
+            }
+
+            const rebuiltRepeatBuild = recurringRule
+              ? buildRepeatDayKeys(anchorDayKey, recurringRule)
+              : { dayKeys: [anchorDayKey], truncated: false };
+            if (rebuiltRepeatBuild.dayKeys.length === 0) {
+              setEditorState((current) => ({
+                ...current,
+                errorText: 'No days match the selected repeat rule.',
+              }));
+              return;
+            }
+
+            const affectedIdSet = new Set(targetBlocks.map((entry) => entry.block.id));
+            const dayBlocksCache = new Map<string, TimeBlock[]>();
+
+            for (const targetDayKey of rebuiltRepeatBuild.dayKeys) {
+              let dayBlocks = dayBlocksCache.get(targetDayKey);
+              if (!dayBlocks) {
+                dayBlocks = targetDayKey === dayKey ? sortedBlocks : await getBlocksForDay(targetDayKey);
+                dayBlocksCache.set(targetDayKey, dayBlocks);
+              }
+
+              const otherBlocks = dayBlocks.filter((block) => !affectedIdSet.has(block.id));
+              if (hasOverlap(editorState.lane, null, startMin, endMin, otherBlocks)) {
+                Alert.alert('Invalid time', `One or more events would overlap on ${targetDayKey}.`);
+                return;
+              }
+            }
+
+            await Promise.all(targetBlocks.map((entry) => deleteBlock(entry.block.id)));
+
+            const nextRecurrenceId =
+              recurringRule === null
+                ? null
+                : scope === 'all'
+                  ? existing.recurrenceId
+                  : createRecurrenceId();
+
+            for (let index = 0; index < rebuiltRepeatBuild.dayKeys.length; index += 1) {
+              const targetDayKey = rebuiltRepeatBuild.dayKeys[index];
+              await insertBlock(
+                {
+                  lane: editorState.lane,
+                  title,
+                  tags: nextTags,
+                  startMin,
+                  endMin,
+                  linkedPlannedId:
+                    editorState.lane === 'actual'
+                      ? nextRecurrenceId
+                        ? null
+                        : normalizedLinkedPlannedId
+                      : undefined,
+                  recurrenceId: nextRecurrenceId,
+                  recurrenceIndex: nextRecurrenceId ? index + 1 : null,
+                  repeatRule: recurringRule ?? null,
+                },
+                targetDayKey
+              );
+            }
+
+            const refreshedBlocks = await getBlocksForDay(dayKey);
+            setBlocks(sortByStartMin(refreshedBlocks));
+            void triggerSuccessHaptic();
+            closeEditor();
+
+            if (recurringRule && rebuiltRepeatBuild.truncated) {
+              showFeedback('Created a 1-year rolling series. Extend it later if needed.');
+            }
+          } catch {
+            Alert.alert('Storage error', 'Could not save block changes.');
+          }
+        })();
+      };
+
+      if (existing.recurrenceId) {
+        promptSeriesScope('edit', runEdit);
+      } else {
+        runEdit('this');
+      }
 
       return;
     }
 
-    const newBlockInput: Omit<TimeBlock, 'id'> = {
-      lane: editorState.lane,
-      title,
-      tags: toSingleCategory(editorState.tags),
-      startMin,
-      endMin,
-      linkedPlannedId: editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined,
-    };
-    const repeatUntilDayKeyRaw = editorState.repeatUntilDayKey.trim();
-    const repeatUntilDayKey =
-      editorState.repeatPreset === 'none' ? dayKey : repeatUntilDayKeyRaw;
-
-    if (editorState.repeatPreset !== 'none') {
-      if (!dayKeyToLocalDate(repeatUntilDayKey)) {
+    const recurringRule =
+      editorState.repeatPreset === 'none' ? null : buildRepeatRuleFromEditorState(editorState, dayKey);
+    if (recurringRule && recurringRule.endMode === 'onDate') {
+      const rawEndDayKey = editorState.repeatUntilDayKey.trim();
+      if (!dayKeyToLocalDate(rawEndDayKey)) {
         setEditorState((current) => ({
           ...current,
           errorText: 'Repeat until must be a valid date (YYYY-MM-DD).',
         }));
         return;
       }
-
-      if (repeatUntilDayKey < dayKey) {
+      if (recurringRule.endDayKey < dayKey) {
         setEditorState((current) => ({
           ...current,
           errorText: 'Repeat until cannot be before this day.',
@@ -1508,8 +2076,24 @@ export default function DayTimeline() {
       }
     }
 
-    const targetDayKeys = buildRepeatDayKeys(dayKey, repeatUntilDayKey, editorState.repeatPreset);
-    if (targetDayKeys.length === 0) {
+    const newBlockInput: Omit<TimeBlock, 'id'> = {
+      lane: editorState.lane,
+      title,
+      tags: nextTags,
+      startMin,
+      endMin,
+      linkedPlannedId:
+        editorState.lane === 'actual' && editorState.repeatPreset === 'none'
+          ? normalizedLinkedPlannedId
+          : undefined,
+      recurrenceId: null,
+      recurrenceIndex: null,
+      repeatRule: null,
+    };
+    const repeatBuild = recurringRule
+      ? buildRepeatDayKeys(dayKey, recurringRule)
+      : { dayKeys: [dayKey], truncated: false };
+    if (repeatBuild.dayKeys.length === 0) {
       setEditorState((current) => ({
         ...current,
         errorText: 'No days match the selected repeat rule.',
@@ -1523,9 +2107,11 @@ export default function DayTimeline() {
       const insertedBlocksOnCurrentDay: TimeBlock[] = [];
       let insertedCount = 0;
       let skippedCount = 0;
+      const recurrenceId = editorState.repeatPreset === 'none' ? null : createRecurrenceId();
 
       try {
-        for (const targetDayKey of targetDayKeys) {
+        for (let index = 0; index < repeatBuild.dayKeys.length; index += 1) {
+          const targetDayKey = repeatBuild.dayKeys[index];
           let dayBlocks = blocksByDayCache.get(targetDayKey);
 
           if (!dayBlocks) {
@@ -1538,7 +2124,21 @@ export default function DayTimeline() {
             continue;
           }
 
-          const insertedBlock = await insertBlock(newBlockInput, targetDayKey);
+          const insertedBlock = await insertBlock(
+            {
+              ...newBlockInput,
+              linkedPlannedId:
+                editorState.lane === 'actual'
+                  ? recurrenceId
+                    ? null
+                    : normalizedLinkedPlannedId
+                  : undefined,
+              recurrenceId,
+              recurrenceIndex: recurrenceId ? index + 1 : null,
+              repeatRule: recurrenceId ? recurringRule : null,
+            },
+            targetDayKey
+          );
           insertedCount += 1;
           const nextDayBlocks = sortByStartMin([...dayBlocks, insertedBlock]);
           blocksByDayCache.set(targetDayKey, nextDayBlocks);
@@ -1567,6 +2167,8 @@ export default function DayTimeline() {
 
         if (editorState.repeatPreset !== 'none' && skippedCount > 0) {
           showFeedback(`Created ${insertedCount}; skipped ${skippedCount} overlaps.`);
+        } else if (editorState.repeatPreset !== 'none' && repeatBuild.truncated) {
+          showFeedback('Created a 1-year rolling series. Extend it later if needed.');
         }
       } catch {
         if (insertedCount > 0) {
@@ -1594,13 +2196,20 @@ export default function DayTimeline() {
       return true;
     }
 
-    if (editorState.mode === 'create' && editorState.repeatPreset !== 'none') {
-      const repeatUntilDayKey = editorState.repeatUntilDayKey.trim();
-      if (!dayKeyToLocalDate(repeatUntilDayKey) || repeatUntilDayKey < dayKey) {
-        return true;
+    const repeatOptionsActive =
+      editorState.repeatPreset !== 'none' &&
+      (editorState.mode === 'create' || (editorState.mode === 'edit' && editorState.isRecurringSource));
+
+    if (repeatOptionsActive) {
+      const repeatRule = buildRepeatRuleFromEditorState(editorState, dayKey);
+      if (repeatRule.endMode === 'onDate') {
+        const repeatUntilDayKey = editorState.repeatUntilDayKey.trim();
+        if (!dayKeyToLocalDate(repeatUntilDayKey) || repeatRule.endDayKey < dayKey) {
+          return true;
+        }
       }
 
-      if (buildRepeatDayKeys(dayKey, repeatUntilDayKey, editorState.repeatPreset).length === 0) {
+      if (buildRepeatDayKeys(dayKey, repeatRule).dayKeys.length === 0) {
         return true;
       }
 
@@ -1615,7 +2224,13 @@ export default function DayTimeline() {
     editorState.endText,
     editorState.lane,
     editorState.mode,
+    editorState.repeatEndMode,
+    editorState.repeatIntervalText,
+    editorState.isRecurringSource,
+    editorState.repeatMonthlyMode,
+    editorState.repeatOccurrenceCountText,
     editorState.repeatPreset,
+    editorState.repeatWeekDays,
     editorState.repeatUntilDayKey,
     editorState.startText,
     editorState.tags.length,
@@ -1627,7 +2242,7 @@ export default function DayTimeline() {
     if (section === 'execution') {
       Alert.alert(
         'Execution Score',
-        'Done time divided by planned time for the selected day. None is excluded. Not shown for future dates.'
+        'Productive done time divided by productive planned time for the selected day. None and Break are excluded. Break time above what was planned subtracts from the score. Not shown for future dates.'
       );
       return;
     }
@@ -1635,7 +2250,7 @@ export default function DayTimeline() {
     if (section === 'totals') {
       Alert.alert(
         'Planned vs Done',
-        'Planned and done totals for today, plus the delta between them. None is excluded.'
+        'Totals exclude None and Break to align with execution score. Category rows include Break and done-only categories (shown as Planned 0m).'
       );
       return;
     }
@@ -1846,6 +2461,7 @@ export default function DayTimeline() {
   const buildCreateGesture = useCallback(
     (lane: Lane) =>
       Gesture.Pan()
+        .enabled(!isPinching)
         .runOnJS(true)
         .activateAfterLongPress(220)
         .activeOffsetY([-CREATE_THRESHOLD_PX, CREATE_THRESHOLD_PX])
@@ -1859,7 +2475,7 @@ export default function DayTimeline() {
         .onFinalize(() => {
           finalizeDraftCreation();
         }),
-    [beginDraftCreation, finalizeDraftCreation, updateDraftCreation]
+    [beginDraftCreation, finalizeDraftCreation, isPinching, updateDraftCreation]
   );
 
   const createGesture = useMemo(
@@ -1933,12 +2549,6 @@ export default function DayTimeline() {
 
     return baseOffsets;
   }, [pixelsPerMinute, timelineCanvasHeight]);
-  const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
-    ? 'compare'
-    : laneVisibility.planned
-      ? 'planned'
-      : 'actual';
-
   const setViewMode = useCallback((mode: ViewMode) => {
     if (mode === 'compare') {
       setLaneVisibility({ planned: true, actual: true });
@@ -2196,7 +2806,8 @@ export default function DayTimeline() {
             <View style={styles.timelineGestureWrap}>
               <ScrollView
                 ref={timelineScrollRef}
-                scrollEnabled={activeDragId === null && !isCreatingDraft}
+                scrollEnabled={activeDragId === null && !isCreatingDraft && !isPinching}
+                bounces={!isPinching}
                 style={styles.scrollView}
                 contentContainerStyle={[styles.scrollContent, { minHeight: timelineCanvasHeight }]}
                 onLayout={(event) => {
@@ -2267,7 +2878,7 @@ export default function DayTimeline() {
                       copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
                       onCopyCheckboxPress={handlePlanCheckboxPress}
                       categoryColorMap={categoryColorMap}
-                      interactive={!dimmed}
+                      interactive={!dimmed && !isPinching}
                       dimmed={dimmed}
                       pixelsPerMinute={pixelsPerMinute}
                     />
@@ -2330,7 +2941,7 @@ export default function DayTimeline() {
                     copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
                     onCopyCheckboxPress={handlePlanCheckboxPress}
                     categoryColorMap={categoryColorMap}
-                    interactive={!dimmed}
+                    interactive={!dimmed && !isPinching}
                     dimmed={dimmed}
                     pixelsPerMinute={pixelsPerMinute}
                   />
@@ -2378,13 +2989,19 @@ export default function DayTimeline() {
       <BlockEditorModal
         visible={editorState.visible}
         mode={editorState.mode}
+        showRepeatControls={editorState.mode === 'create' || editorState.isRecurringSource}
         lane={editorState.lane}
         titleValue={editorState.title}
         selectedTags={editorState.tags}
         startValue={editorState.startText}
         endValue={editorState.endText}
         repeatPreset={editorState.repeatPreset}
+        repeatIntervalText={editorState.repeatIntervalText}
+        repeatWeekDays={editorState.repeatWeekDays}
+        repeatMonthlyMode={editorState.repeatMonthlyMode}
+        repeatEndMode={editorState.repeatEndMode}
         repeatUntilDayKey={editorState.repeatUntilDayKey}
+        repeatOccurrenceCountText={editorState.repeatOccurrenceCountText}
         linkedPlannedId={editorState.linkedPlannedId}
         categoryOptions={categoryOptions}
         plannedLinkOptions={plannedLinkOptions}
@@ -2394,10 +3011,75 @@ export default function DayTimeline() {
         onChangeStart={(value) => setEditorField('startText', value)}
         onChangeEnd={(value) => setEditorField('endText', value)}
         onChangeRepeatPreset={(value) =>
-          setEditorState((current) => ({ ...current, repeatPreset: value, errorText: null }))
+          setEditorState((current) => {
+            const fallbackDay = dayKeyToLocalDate(dayKey)?.getDay() ?? new Date().getDay();
+            return {
+              ...current,
+              repeatPreset: value,
+              repeatWeekDays:
+                value === 'weekly'
+                  ? normalizeWeekDays(current.repeatWeekDays, fallbackDay)
+                  : current.repeatWeekDays,
+              repeatIntervalText: value === 'weekdays' ? '1' : current.repeatIntervalText,
+              repeatDirty: true,
+              errorText: null,
+            };
+          })
+        }
+        onChangeRepeatIntervalText={(value) =>
+          setEditorState((current) => ({
+            ...current,
+            repeatIntervalText: value,
+            repeatDirty: true,
+            errorText: null,
+          }))
+        }
+        onToggleRepeatWeekDay={(day) =>
+          setEditorState((current) => {
+            const selected = current.repeatWeekDays.includes(day);
+            const nextWeekDays = selected
+              ? current.repeatWeekDays.filter((value) => value !== day)
+              : [...current.repeatWeekDays, day];
+
+            return {
+              ...current,
+              repeatWeekDays: normalizeWeekDays(nextWeekDays, day),
+              repeatDirty: true,
+              errorText: null,
+            };
+          })
+        }
+        onChangeRepeatMonthlyMode={(value) =>
+          setEditorState((current) => ({
+            ...current,
+            repeatMonthlyMode: value,
+            repeatDirty: true,
+            errorText: null,
+          }))
+        }
+        onChangeRepeatEndMode={(value) =>
+          setEditorState((current) => ({
+            ...current,
+            repeatEndMode: value,
+            repeatDirty: true,
+            errorText: null,
+          }))
         }
         onChangeRepeatUntilDayKey={(value) =>
-          setEditorState((current) => ({ ...current, repeatUntilDayKey: value, errorText: null }))
+          setEditorState((current) => ({
+            ...current,
+            repeatUntilDayKey: value,
+            repeatDirty: true,
+            errorText: null,
+          }))
+        }
+        onChangeRepeatOccurrenceCountText={(value) =>
+          setEditorState((current) => ({
+            ...current,
+            repeatOccurrenceCountText: value,
+            repeatDirty: true,
+            errorText: null,
+          }))
         }
         onChangeLane={setEditorLane}
         onChangeLinkedPlannedId={(value) =>

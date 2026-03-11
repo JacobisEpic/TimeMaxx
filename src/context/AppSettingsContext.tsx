@@ -30,6 +30,10 @@ export const DEFAULT_CATEGORIES: AppSettings['categories'] = [
   { id: 'break', label: 'Break', color: '#F59E0B' },
   { id: 'other', label: 'None', color: '#9CA3AF' },
 ];
+const PROTECTED_CATEGORIES: AppSettings['categories'] = [
+  { id: 'break', label: 'Break', color: '#F59E0B' },
+  { id: 'other', label: 'None', color: '#9CA3AF' },
+];
 
 const DEFAULT_SETTINGS: AppSettings = {
   plannedScanStartMin: 9 * 60,
@@ -54,30 +58,39 @@ function normalizeCategoryId(input: string): string {
   return normalized || 'category';
 }
 
+function ensureProtectedCategories(categories: AppSettings['categories']): AppSettings['categories'] {
+  const protectedById = new Map(PROTECTED_CATEGORIES.map((category) => [category.id, category]));
+  const normalized = categories.map((item) => {
+    const protectedCategory = protectedById.get(item.id);
+    if (!protectedCategory) {
+      return item;
+    }
+
+    return { ...item, label: protectedCategory.label, color: protectedCategory.color };
+  });
+  const existingIds = new Set(normalized.map((item) => item.id));
+
+  for (const protectedCategory of PROTECTED_CATEGORIES) {
+    if (!existingIds.has(protectedCategory.id)) {
+      normalized.push({ ...protectedCategory });
+    }
+  }
+
+  return normalized;
+}
+
 function parseCategoriesSetting(
   rawValue: string | null,
   fallback: AppSettings['categories']
 ): AppSettings['categories'] {
-  const ensureOtherCategory = (categories: AppSettings['categories']): AppSettings['categories'] => {
-    const normalized = categories.map((item) =>
-      item.id === 'other' ? { ...item, label: 'None', color: '#9CA3AF' } : item
-    );
-    const hasOther = normalized.some((item) => item.id === 'other');
-    if (hasOther) {
-      return normalized;
-    }
-
-    return [...normalized, { id: 'other', label: 'None', color: '#9CA3AF' }];
-  };
-
   if (!rawValue) {
-    return ensureOtherCategory(fallback);
+    return ensureProtectedCategories(fallback);
   }
 
   try {
     const parsed = JSON.parse(rawValue);
     if (!Array.isArray(parsed)) {
-      return ensureOtherCategory(fallback);
+      return ensureProtectedCategories(fallback);
     }
 
     const sanitized = parsed
@@ -98,9 +111,9 @@ function parseCategoriesSetting(
       })
       .filter((item): item is { id: string; label: string; color: string } => item !== null);
 
-    return ensureOtherCategory(sanitized.length ? sanitized : fallback);
+    return ensureProtectedCategories(sanitized.length ? sanitized : fallback);
   } catch {
-    return ensureOtherCategory(fallback);
+    return ensureProtectedCategories(fallback);
   }
 }
 
@@ -206,6 +219,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
         ...settings,
         ...patch,
       };
+      nextSettings.categories = ensureProtectedCategories(nextSettings.categories);
       const allowedCategoryIds = new Set(nextSettings.categories.map((category) => category.id));
       const sanitizedVisibleCategoryIds = (nextSettings.visibleCategoryIds ?? [])
         .map((id) => id.trim().toLowerCase())

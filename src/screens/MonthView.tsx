@@ -8,6 +8,7 @@ import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { getBlocksForDayRange } from '@/src/storage/blocksDb';
 import type { Block } from '@/src/types/blocks';
 import { getLocalDayKey } from '@/src/utils/dayKey';
+import { computeExecutionScoreSummary } from '@/src/utils/executionScore';
 
 type DayExecution = {
   dayKey: string;
@@ -42,34 +43,14 @@ function addDays(base: Date, count: number): Date {
   return copy;
 }
 
-function getCategoryKey(block: Block): string {
-  return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
-}
-
-function isExcludedFromMetrics(block: Block): boolean {
-  const key = getCategoryKey(block);
-  return key === 'none' || key === 'other';
-}
-
 function computeExecution(blocks: Block[]): DayExecution {
-  let plannedMinutes = 0;
-  let doneMinutes = 0;
-
-  for (const block of blocks) {
-    if (isExcludedFromMetrics(block)) {
-      continue;
-    }
-
-    const duration = Math.max(0, block.endMin - block.startMin);
-    if (block.lane === 'planned') {
-      plannedMinutes += duration;
-    } else {
-      doneMinutes += duration;
-    }
-  }
-
-  const scorePercent = plannedMinutes > 0 ? Math.round((doneMinutes / plannedMinutes) * 100) : null;
-  return { dayKey: '', plannedMinutes, doneMinutes, scorePercent };
+  const summary = computeExecutionScoreSummary(blocks);
+  return {
+    dayKey: '',
+    plannedMinutes: summary.plannedMinutes,
+    doneMinutes: summary.doneMinutes,
+    scorePercent: summary.scorePercent,
+  };
 }
 
 function buildCalendarCells(displayMonth: Date): CalendarCell[] {
@@ -221,7 +202,7 @@ export default function MonthView() {
           })}
         </View>
         <View style={styles.legendRow}>
-          <Text style={styles.legendText}>Daily execution score shown as `Done / Planned`</Text>
+          <Text style={styles.legendText}>Daily execution score shown as `(Done - excess break) / Planned`</Text>
           {loading ? <Text style={styles.legendText}>Loading…</Text> : null}
         </View>
       </ScrollView>

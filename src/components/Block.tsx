@@ -13,6 +13,7 @@ export const PIXELS_PER_MINUTE = 1;
 const MINUTES_PER_DAY = 24 * 60;
 const SNAP_INTERVAL_MINUTES = 15;
 const CHECKBOX_HIT_SIZE = 24;
+const LAYOUT_QUANTIZATION_FACTOR = 2;
 
 type BlockProps = {
   id: string;
@@ -38,6 +39,7 @@ type BlockProps = {
   interactive?: boolean;
   dimmed?: boolean;
   pixelsPerMinute?: number;
+  suppressText?: boolean;
 };
 
 export function Block({
@@ -64,10 +66,15 @@ export function Block({
   interactive = true,
   dimmed = false,
   pixelsPerMinute = PIXELS_PER_MINUTE,
+  suppressText = false,
 }: BlockProps) {
   const effectivePixelsPerMinute = Math.max(0.01, pixelsPerMinute);
   const durationMin = Math.max(1, endMin - startMin);
-  const height = durationMin * effectivePixelsPerMinute;
+  const top = Math.round(startMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR;
+  const height = Math.max(
+    1,
+    Math.round(durationMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR
+  );
   const primaryTag = tags[0];
   const overrideColor = primaryTag ? categoryColorMap?.[primaryTag.toLowerCase()] : undefined;
   const categoryColor = overrideColor ?? getCategoryColor(primaryTag);
@@ -155,12 +162,17 @@ export function Block({
 
   const composedGesture = Gesture.Simultaneous(Gesture.Exclusive(panGesture, tapGesture), focusGesture);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    top: (startMin + dragDeltaMin.value) * effectivePixelsPerMinute,
-    opacity: isDragging.value ? 0.93 : dimmed ? 0.3 : 1,
-    zIndex: isDragging.value ? 30 : 1,
-    elevation: isDragging.value ? 4 : 0,
-  }));
+  const animatedStyle = useAnimatedStyle(() => {
+    const translateY =
+      Math.round(dragDeltaMin.value * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) /
+      LAYOUT_QUANTIZATION_FACTOR;
+    return {
+      transform: [{ translateY }],
+      opacity: isDragging.value ? 0.93 : dimmed ? 0.3 : 1,
+      zIndex: isDragging.value ? 30 : 1,
+      elevation: isDragging.value ? 4 : 0,
+    };
+  });
   const shownStartMin = previewStartMin ?? startMin;
   const shownEndMin = previewEndMin ?? endMin;
   const blockView = (
@@ -172,6 +184,7 @@ export function Block({
         showCopyCheckbox && styles.blockWithCheckbox,
         animatedStyle,
         {
+          top,
           height,
           backgroundColor: tintedFill,
           borderColor: UI_COLORS.glassStrokeSoft,
@@ -187,15 +200,19 @@ export function Block({
           />
         </Animated.View>
       ) : null}
-      <Text numberOfLines={1} style={styles.title}>
-        {title}
-      </Text>
-      <Text numberOfLines={1} style={styles.tag}>
-        {primaryTag ?? 'uncategorized'}
-      </Text>
-      <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
-        {formatMinutesAmPm(shownStartMin)}-{formatMinutesAmPm(shownEndMin)}
-      </Text>
+      {!suppressText ? (
+        <>
+          <Text numberOfLines={1} style={styles.title}>
+            {title}
+          </Text>
+          <Text numberOfLines={1} style={styles.tag}>
+            {primaryTag ?? 'uncategorized'}
+          </Text>
+          <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
+            {formatMinutesAmPm(shownStartMin)}-{formatMinutesAmPm(shownEndMin)}
+          </Text>
+        </>
+      ) : null}
     </Animated.View>
   );
 

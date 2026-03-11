@@ -1,9 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 
-import type { Block, Lane } from '@/src/types/blocks';
+import type { Block, BlockRepeatPreset, Lane } from '@/src/types/blocks';
+import { normalizeRepeatRule } from '@/src/utils/recurrence';
 
 const DB_NAME = 'plan-vs-actual.db';
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '4';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initPromise: Promise<void> | null = null;
@@ -56,7 +57,68 @@ type BlockRow = {
   title: string;
   tagsJson: string;
   linkedPlannedId: string | null;
+  recurrenceId: string | null;
+  recurrenceIndex: number | null;
+  recurrenceRuleJson: string | null;
 };
+
+function parseRepeatPreset(value: unknown): BlockRepeatPreset {
+  if (
+    value === 'none' ||
+    value === 'daily' ||
+    value === 'weekdays' ||
+    value === 'weekly' ||
+    value === 'monthly' ||
+    value === 'yearly'
+  ) {
+    return value;
+  }
+
+  return 'none';
+}
+
+function parseRepeatRule(recurrenceRuleJson: string | null, dayKey: string) {
+  if (!recurrenceRuleJson) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(recurrenceRuleJson);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return null;
+    }
+
+    const nextRule = normalizeRepeatRule(
+      {
+        preset: parseRepeatPreset((parsed as { preset?: unknown }).preset),
+        interval: Number((parsed as { interval?: unknown }).interval ?? 1),
+        weekDays: Array.isArray((parsed as { weekDays?: unknown }).weekDays)
+          ? ((parsed as { weekDays: unknown[] }).weekDays as number[])
+          : [],
+        monthlyMode:
+          (parsed as { monthlyMode?: unknown }).monthlyMode === 'ordinalWeekday'
+            ? 'ordinalWeekday'
+            : 'dayOfMonth',
+        endMode:
+          (parsed as { endMode?: unknown }).endMode === 'never'
+            ? 'never'
+            : (parsed as { endMode?: unknown }).endMode === 'afterCount'
+              ? 'afterCount'
+              : 'onDate',
+        endDayKey:
+          typeof (parsed as { endDayKey?: unknown }).endDayKey === 'string'
+            ? ((parsed as { endDayKey: string }).endDayKey as string)
+            : dayKey,
+        occurrenceCount: Number((parsed as { occurrenceCount?: unknown }).occurrenceCount ?? 10),
+      },
+      dayKey
+    );
+
+    return nextRule;
+  } catch {
+    return null;
+  }
+}
 
 function mapRowToBlock(row: BlockRow): Block | null {
   const lane = parseLane(row.lane);
@@ -73,6 +135,9 @@ function mapRowToBlock(row: BlockRow): Block | null {
     title: row.title,
     tags: parseTags(row.tagsJson),
     linkedPlannedId: lane === 'actual' ? row.linkedPlannedId : undefined,
+    recurrenceId: row.recurrenceId,
+    recurrenceIndex: row.recurrenceIndex,
+    repeatRule: parseRepeatRule(row.recurrenceRuleJson, row.dayKey),
   };
 }
 
@@ -95,6 +160,9 @@ export async function initDb(): Promise<void> {
         title TEXT NOT NULL,
         tagsJson TEXT NOT NULL,
         linkedPlannedId TEXT NULL,
+        recurrenceId TEXT NULL,
+        recurrenceIndex INTEGER NULL,
+        recurrenceRuleJson TEXT NULL,
         updatedAt INTEGER NOT NULL
       );
 
@@ -109,9 +177,21 @@ export async function initDb(): Promise<void> {
 
     const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(blocks);');
     const hasLinkedPlannedId = columns.some((column) => column.name === 'linkedPlannedId');
+    const hasRecurrenceId = columns.some((column) => column.name === 'recurrenceId');
+    const hasRecurrenceIndex = columns.some((column) => column.name === 'recurrenceIndex');
+    const hasRecurrenceRuleJson = columns.some((column) => column.name === 'recurrenceRuleJson');
 
     if (!hasLinkedPlannedId) {
       await db.execAsync('ALTER TABLE blocks ADD COLUMN linkedPlannedId TEXT NULL;');
+    }
+    if (!hasRecurrenceId) {
+      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceId TEXT NULL;');
+    }
+    if (!hasRecurrenceIndex) {
+      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceIndex INTEGER NULL;');
+    }
+    if (!hasRecurrenceRuleJson) {
+      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceRuleJson TEXT NULL;');
     }
 
     await db.runAsync(
@@ -128,7 +208,7 @@ export async function getBlocksForDay(dayKey: string): Promise<Block[]> {
   await initDb();
   const db = await getDb();
   const rows = await db.getAllAsync<BlockRow>(
-    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      WHERE dayKey = ?
      ORDER BY lane ASC, startMin ASC, id ASC;`,
@@ -144,7 +224,7 @@ export async function getBlocksForDayRange(dayKeyStart: string, dayKeyEnd: strin
   await initDb();
   const db = await getDb();
   const rows = await db.getAllAsync<BlockRow>(
-    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      WHERE dayKey >= ? AND dayKey <= ?
      ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`,
@@ -175,7 +255,7 @@ export async function getAllBlocksByDay(): Promise<Record<string, Block[]>> {
   await initDb();
   const db = await getDb();
   const rows = await db.getAllAsync<BlockRow>(
-    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`
   );
@@ -199,6 +279,39 @@ export async function getAllBlocksByDay(): Promise<Record<string, Block[]>> {
   return blocksByDay;
 }
 
+export type BlockWithDayKey = {
+  dayKey: string;
+  block: Block;
+};
+
+export async function getBlocksForRecurrence(recurrenceId: string): Promise<BlockWithDayKey[]> {
+  await initDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<BlockRow>(
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
+     FROM blocks
+     WHERE recurrenceId = ?
+     ORDER BY recurrenceIndex ASC, dayKey ASC, startMin ASC, id ASC;`,
+    recurrenceId
+  );
+
+  const results: BlockWithDayKey[] = [];
+
+  for (const row of rows) {
+    const block = mapRowToBlock(row);
+    if (!block) {
+      continue;
+    }
+
+    results.push({
+      dayKey: row.dayKey,
+      block,
+    });
+  }
+
+  return results;
+}
+
 export async function insertBlock(
   input: Omit<Block, 'id'> & { id?: string },
   dayKey: string
@@ -209,8 +322,8 @@ export async function insertBlock(
   const now = Date.now();
 
   await db.runAsync(
-    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
     id,
     dayKey,
     input.lane,
@@ -219,6 +332,9 @@ export async function insertBlock(
     input.title,
     JSON.stringify(input.tags),
     input.lane === 'actual' ? input.linkedPlannedId ?? null : null,
+    input.recurrenceId ?? null,
+    input.recurrenceIndex ?? null,
+    input.repeatRule ? JSON.stringify(input.repeatRule) : null,
     now
   );
 
@@ -230,6 +346,9 @@ export async function insertBlock(
     title: input.title,
     tags: input.tags,
     linkedPlannedId: input.lane === 'actual' ? input.linkedPlannedId ?? null : undefined,
+    recurrenceId: input.recurrenceId ?? null,
+    recurrenceIndex: input.recurrenceIndex ?? null,
+    repeatRule: input.repeatRule ?? null,
   };
 }
 
@@ -240,7 +359,7 @@ export async function updateBlock(block: Block, dayKey: string): Promise<void> {
 
   await db.runAsync(
     `UPDATE blocks
-      SET lane = ?, startMin = ?, endMin = ?, title = ?, tagsJson = ?, linkedPlannedId = ?, updatedAt = ?
+      SET lane = ?, startMin = ?, endMin = ?, title = ?, tagsJson = ?, linkedPlannedId = ?, recurrenceId = ?, recurrenceIndex = ?, recurrenceRuleJson = ?, updatedAt = ?
       WHERE id = ? AND dayKey = ?;`,
     block.lane,
     block.startMin,
@@ -248,6 +367,9 @@ export async function updateBlock(block: Block, dayKey: string): Promise<void> {
     block.title,
     JSON.stringify(block.tags),
     block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
+    block.recurrenceId ?? null,
+    block.recurrenceIndex ?? null,
+    block.repeatRule ? JSON.stringify(block.repeatRule) : null,
     now,
     block.id,
     dayKey
