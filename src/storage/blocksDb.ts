@@ -171,6 +171,34 @@ export async function getBlocksForDayRange(dayKeyStart: string, dayKeyEnd: strin
   return blocksByDay;
 }
 
+export async function getAllBlocksByDay(): Promise<Record<string, Block[]>> {
+  await initDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<BlockRow>(
+    `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId
+     FROM blocks
+     ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`
+  );
+
+  const blocksByDay: Record<string, Block[]> = {};
+
+  for (const row of rows) {
+    const block = mapRowToBlock(row);
+
+    if (!block) {
+      continue;
+    }
+
+    if (!blocksByDay[row.dayKey]) {
+      blocksByDay[row.dayKey] = [];
+    }
+
+    blocksByDay[row.dayKey].push(block);
+  }
+
+  return blocksByDay;
+}
+
 export async function insertBlock(
   input: Omit<Block, 'id'> & { id?: string },
   dayKey: string

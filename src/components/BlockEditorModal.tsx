@@ -14,8 +14,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
-import type { Lane } from '@/src/types/blocks';
-import { formatHHMM, parseHHMM } from '@/src/utils/time';
+import { DEFAULT_CATEGORIES } from '@/src/context/AppSettingsContext';
+import type { BlockRepeatPreset, Lane } from '@/src/types/blocks';
+import { formatHHMM, formatMinutesAmPm, parseHHMM } from '@/src/utils/time';
 
 type PlannedLinkOption = {
   id: string;
@@ -35,6 +36,8 @@ type BlockEditorModalProps = {
   selectedTags: string[];
   startValue: string;
   endValue: string;
+  repeatPreset: BlockRepeatPreset;
+  repeatUntilDayKey: string;
   linkedPlannedId: string | null;
   categoryOptions: { id: string; label: string; color: string }[];
   plannedLinkOptions: PlannedLinkOption[];
@@ -44,6 +47,8 @@ type BlockEditorModalProps = {
   onToggleTag: (tag: string) => void;
   onChangeStart: (value: string) => void;
   onChangeEnd: (value: string) => void;
+  onChangeRepeatPreset: (preset: BlockRepeatPreset) => void;
+  onChangeRepeatUntilDayKey: (value: string) => void;
   onChangeLane: (lane: Lane) => void;
   onChangeLinkedPlannedId: (value: string | null) => void;
   onCancel: () => void;
@@ -52,23 +57,19 @@ type BlockEditorModalProps = {
   onCopyToDone?: () => void;
 };
 
-const CATEGORY_OPTIONS = [
-  { label: 'Work', id: 'work', color: '#3B82F6' },
-  { label: 'Deep Focus', id: 'focus', color: '#8B5CF6' },
-  { label: 'Workout', id: 'health', color: '#22C55E' },
-  { label: 'Meeting', id: 'meeting', color: '#0EA5A4' },
-  { label: 'Personal', id: 'personal', color: '#14B8A6' },
-  { label: 'Break', id: 'break', color: '#F59E0B' },
-  { label: 'None', id: 'other', color: '#9CA3AF' },
-] as const;
+const CATEGORY_OPTIONS = DEFAULT_CATEGORIES;
 
-const START_MINUTE_OPTIONS = [0, 15, 30, 45];
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
 const SHEET_VISIBLE_HEIGHT = '86%';
+const REPEAT_OPTIONS: { value: BlockRepeatPreset; label: string }[] = [
+  { value: 'none', label: 'Does not repeat' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekdays', label: 'Every weekday (Mon-Fri)' },
+  { value: 'weekly', label: 'Weekly' },
+];
 
 function toTimeLabel(hour24: number, minute: number): string {
-  const period = hour24 >= 12 ? 'PM' : 'AM';
-  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+  return formatMinutesAmPm(hour24 * 60 + minute);
 }
 
 function getStartAndDuration(startValue: string, endValue: string): { startMin: number; durationMin: number } {
@@ -90,6 +91,8 @@ export function BlockEditorModal({
   selectedTags,
   startValue,
   endValue,
+  repeatPreset,
+  repeatUntilDayKey,
   linkedPlannedId,
   categoryOptions,
   plannedLinkOptions,
@@ -99,6 +102,8 @@ export function BlockEditorModal({
   onToggleTag,
   onChangeStart,
   onChangeEnd,
+  onChangeRepeatPreset,
+  onChangeRepeatUntilDayKey,
   onChangeLane,
   onChangeLinkedPlannedId,
   onCancel,
@@ -109,6 +114,7 @@ export function BlockEditorModal({
   const insets = useSafeAreaInsets();
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
+  const [repeatPickerVisible, setRepeatPickerVisible] = useState(false);
   const [wheelHour, setWheelHour] = useState(8);
   const [wheelMinute, setWheelMinute] = useState(0);
   const [wheelPeriod, setWheelPeriod] = useState<'AM' | 'PM'>('AM');
@@ -162,11 +168,16 @@ export function BlockEditorModal({
   const safeEnd = parsedEnd !== null ? parsedEnd : Math.min(24 * 60, timeState.startMin + timeState.durationMin);
   const selectedEndHour = Math.floor(safeEnd / 60);
   const selectedEndMinute = safeEnd % 60;
+  const repeatLabel = useMemo(
+    () => REPEAT_OPTIONS.find((option) => option.value === repeatPreset)?.label ?? 'Does not repeat',
+    [repeatPreset]
+  );
 
   useEffect(() => {
     if (!visible) {
       setLinkPickerVisible(false);
       setPickerType(null);
+      setRepeatPickerVisible(false);
     }
   }, [visible]);
 
@@ -179,7 +190,7 @@ export function BlockEditorModal({
     const sourceMinute = pickerType === 'endTime' ? selectedEndMinute : selectedMinute;
     const hour12 = sourceHour % 12 === 0 ? 12 : sourceHour % 12;
     const period: 'AM' | 'PM' = sourceHour >= 12 ? 'PM' : 'AM';
-    const minute = START_MINUTE_OPTIONS.includes(sourceMinute as 0 | 15 | 30 | 45) ? sourceMinute : 0;
+    const minute = sourceMinute >= 0 && sourceMinute <= 59 ? sourceMinute : 0;
     setWheelHour(hour12);
     setWheelMinute(minute);
     setWheelPeriod(period);
@@ -187,8 +198,8 @@ export function BlockEditorModal({
   }, [pickerType, selectedEndHour, selectedEndMinute, selectedHour, selectedMinute, timeState.durationMin]);
 
   const applyStartAndDuration = (startMin: number, durationMin: number) => {
-    const nextStart = Math.max(0, Math.min(23 * 60 + 45, startMin));
-    const safeDuration = Math.max(15, durationMin);
+    const nextStart = Math.max(0, Math.min(23 * 60 + 59, startMin));
+    const safeDuration = Math.max(1, durationMin);
     const nextEnd = Math.min(24 * 60, nextStart + safeDuration);
 
     onChangeStart(formatHHMM(nextStart));
@@ -205,7 +216,7 @@ export function BlockEditorModal({
     const startParsed = parseHHMM(startValue);
     const start = startParsed === null ? timeState.startMin : startParsed;
     const requestedEnd = hour24 * 60 + minute;
-    const nextEnd = Math.max(start + 15, Math.min(24 * 60, requestedEnd));
+    const nextEnd = Math.max(start + 1, Math.min(24 * 60, requestedEnd));
     onChangeEnd(formatHHMM(nextEnd));
     setWheelDuration(nextEnd - start);
   };
@@ -285,6 +296,35 @@ export function BlockEditorModal({
               </View>
             </View>
 
+            {mode === 'create' ? (
+              <View style={styles.repeatSection}>
+                <Text style={styles.label}>Repeat</Text>
+                <Pressable
+                  accessibilityLabel="Choose repeat rule"
+                  style={styles.dropdown}
+                  onPress={() => setRepeatPickerVisible(true)}>
+                  <Text style={styles.dropdownText}>{repeatLabel}</Text>
+                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                </Pressable>
+                {repeatPreset !== 'none' ? (
+                  <View style={styles.repeatUntilWrap}>
+                    <Text style={styles.label}>Repeat Until</Text>
+                    <TextInput
+                      value={repeatUntilDayKey}
+                      onChangeText={onChangeRepeatUntilDayKey}
+                      placeholder="YYYY-MM-DD"
+                      style={styles.input}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      accessibilityLabel="Repeat until date"
+                      placeholderTextColor={UI_COLORS.neutralTextSoft}
+                    />
+                    <Text style={styles.repeatHintText}>Format: YYYY-MM-DD</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
             <Text style={styles.label}>Category</Text>
             <View style={styles.categoryGrid}>
               {categoryRows.map((row, rowIndex) => (
@@ -338,7 +378,7 @@ export function BlockEditorModal({
                                   {option.title}
                                 </Text>
                                 <Text style={styles.inlineLinkTime}>
-                                  {formatHHMM(option.startMin)}-{formatHHMM(option.endMin)}
+                                  {formatMinutesAmPm(option.startMin)}-{formatMinutesAmPm(option.endMin)}
                                 </Text>
                               </View>
                               <Ionicons
@@ -403,6 +443,37 @@ export function BlockEditorModal({
       <Modal
         animationType="fade"
         transparent
+        visible={repeatPickerVisible}
+        onRequestClose={() => setRepeatPickerVisible(false)}>
+        <View style={styles.pickerBackdrop}>
+          <Pressable style={styles.pickerDismissLayer} onPress={() => setRepeatPickerVisible(false)} />
+          <View style={styles.pickerCard}>
+            <Text style={styles.pickerTitle}>Repeat</Text>
+            {REPEAT_OPTIONS.map((option) => {
+              const selected = option.value === repeatPreset;
+
+              return (
+                <Pressable
+                  key={option.value}
+                  accessibilityLabel={`Set repeat ${option.label}`}
+                  style={[styles.pickerRow, selected && styles.pickerRowSelected]}
+                  onPress={() => {
+                    onChangeRepeatPreset(option.value);
+                    setRepeatPickerVisible(false);
+                  }}>
+                  <Text style={[styles.pickerRowTitle, selected && styles.pickerRowTitleSelected]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
         visible={linkPickerVisible}
         onRequestClose={() => setLinkPickerVisible(false)}>
         <View style={styles.pickerBackdrop}>
@@ -435,7 +506,7 @@ export function BlockEditorModal({
                       {option.title}
                     </Text>
                     <Text style={styles.pickerRowTime}>
-                      {formatHHMM(option.startMin)}-{formatHHMM(option.endMin)}
+                      {formatMinutesAmPm(option.startMin)}-{formatMinutesAmPm(option.endMin)}
                     </Text>
                   </Pressable>
                 );
@@ -474,7 +545,7 @@ export function BlockEditorModal({
                     setWheelMinute(value);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, value, wheelPeriod);
                   }}>
-                  {START_MINUTE_OPTIONS.map((value) => (
+                  {MINUTE_OPTIONS.map((value) => (
                     <Picker.Item key={`minute-wheel-${value}`} label={String(value).padStart(2, '0')} value={value} />
                   ))}
                 </Picker>
@@ -647,6 +718,16 @@ const styles = StyleSheet.create({
   timeColumn: {
     flex: 1,
     gap: 6,
+  },
+  repeatSection: {
+    gap: 6,
+  },
+  repeatUntilWrap: {
+    gap: 6,
+  },
+  repeatHintText: {
+    color: UI_COLORS.neutralTextSoft,
+    fontSize: UI_TYPE.caption,
   },
   startControlGroup: {
     flexDirection: 'row',

@@ -62,13 +62,16 @@ export const UI_TYPE = {
 
 export const CATEGORY_COLORS = {
   work: '#3B82F6',
-  focus: '#8B5CF6',
   health: '#22C55E',
-  meeting: '#0EA5A4',
+  chores: '#EC4899',
+  hobbies: '#8B5CF6',
   break: '#F59E0B',
+  other: '#9CA3AF',
+  // Legacy tags are kept for older imported/sample data.
+  focus: '#8B5CF6',
+  meeting: '#0EA5A4',
   admin: '#94A3B8',
   personal: '#14B8A6',
-  other: '#9CA3AF',
   uncategorized: '#94A3B8',
 } as const;
 
@@ -99,26 +102,32 @@ export function getCategoryLabel(tag?: string): string {
   if (normalized === 'work') {
     return 'Work';
   }
-  if (normalized === 'focus') {
-    return 'Deep Focus';
-  }
   if (normalized === 'health') {
-    return 'Workout';
+    return 'Health';
   }
-  if (normalized === 'meeting') {
-    return 'Meeting';
+  if (normalized === 'chores') {
+    return 'Chores';
+  }
+  if (normalized === 'hobbies') {
+    return 'Hobbies';
   }
   if (normalized === 'break') {
     return 'Break';
   }
-  if (normalized === 'admin') {
-    return 'Admin';
+  if (normalized === 'other') {
+    return 'None';
+  }
+  if (normalized === 'focus') {
+    return 'Deep Focus';
+  }
+  if (normalized === 'meeting') {
+    return 'Meeting';
   }
   if (normalized === 'personal') {
     return 'Personal';
   }
-  if (normalized === 'other') {
-    return 'None';
+  if (normalized === 'admin') {
+    return 'Admin';
   }
 
   return 'Uncategorized';

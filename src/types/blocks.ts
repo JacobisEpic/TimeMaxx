@@ -1,4 +1,5 @@
 export type Lane = 'planned' | 'actual';
+export type BlockRepeatPreset = 'none' | 'daily' | 'weekdays' | 'weekly';
 
 export type Block = {
   id: string;

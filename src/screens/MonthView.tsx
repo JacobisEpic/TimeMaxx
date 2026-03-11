@@ -68,7 +68,7 @@ function computeExecution(blocks: Block[]): DayExecution {
     }
   }
 
-  const scorePercent = plannedMinutes > 0 ? Math.min(100, Math.round((doneMinutes / plannedMinutes) * 100)) : null;
+  const scorePercent = plannedMinutes > 0 ? Math.round((doneMinutes / plannedMinutes) * 100) : null;
   return { dayKey: '', plannedMinutes, doneMinutes, scorePercent };
 }
 

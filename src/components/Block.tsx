@@ -6,23 +6,13 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { UI_COLORS, getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
+import { formatMinutesAmPm } from '@/src/utils/time';
 
 export const PIXELS_PER_MINUTE = 1;
 
 const MINUTES_PER_DAY = 24 * 60;
 const SNAP_INTERVAL_MINUTES = 15;
 const CHECKBOX_HIT_SIZE = 24;
-
-function formatAmPm(min: number): string {
-  const rounded = Math.max(0, Math.min(MINUTES_PER_DAY, Math.round(min)));
-  const safe = rounded === MINUTES_PER_DAY ? 0 : rounded;
-  const hours24 = Math.floor(safe / 60);
-  const minutes = safe % 60;
-  const period = hours24 >= 12 ? 'PM' : 'AM';
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
-
-  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`;
-}
 
 type BlockProps = {
   id: string;
@@ -47,6 +37,7 @@ type BlockProps = {
   categoryColorMap?: Record<string, string>;
   interactive?: boolean;
   dimmed?: boolean;
+  pixelsPerMinute?: number;
 };
 
 export function Block({
@@ -72,9 +63,11 @@ export function Block({
   categoryColorMap,
   interactive = true,
   dimmed = false,
+  pixelsPerMinute = PIXELS_PER_MINUTE,
 }: BlockProps) {
+  const effectivePixelsPerMinute = Math.max(0.01, pixelsPerMinute);
   const durationMin = Math.max(1, endMin - startMin);
-  const height = durationMin * PIXELS_PER_MINUTE;
+  const height = durationMin * effectivePixelsPerMinute;
   const primaryTag = tags[0];
   const overrideColor = primaryTag ? categoryColorMap?.[primaryTag.toLowerCase()] : undefined;
   const categoryColor = overrideColor ?? getCategoryColor(primaryTag);
@@ -99,7 +92,7 @@ export function Block({
         return;
       }
 
-      const rawDeltaMin = event.translationY / PIXELS_PER_MINUTE;
+      const rawDeltaMin = event.translationY / effectivePixelsPerMinute;
       const snappedDeltaMin = Math.round(rawDeltaMin / SNAP_INTERVAL_MINUTES) * SNAP_INTERVAL_MINUTES;
       const minDelta = -startMin;
       const maxDelta = MINUTES_PER_DAY - durationMin - startMin;
@@ -166,7 +159,7 @@ export function Block({
   const composedGesture = Gesture.Simultaneous(Gesture.Exclusive(panGesture, tapGesture), focusGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    top: (startMin + dragDeltaMin.value) * PIXELS_PER_MINUTE,
+    top: (startMin + dragDeltaMin.value) * effectivePixelsPerMinute,
     opacity: isDragging.value ? 0.93 : dimmed ? 0.3 : 1,
     zIndex: isDragging.value ? 30 : 1,
     elevation: isDragging.value ? 4 : 0,
@@ -204,7 +197,7 @@ export function Block({
         {primaryTag ?? 'uncategorized'}
       </Text>
       <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
-        {formatAmPm(shownStartMin)}-{formatAmPm(shownEndMin)}
+        {formatMinutesAmPm(shownStartMin)}-{formatMinutesAmPm(shownEndMin)}
       </Text>
     </Animated.View>
   );

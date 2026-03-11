@@ -24,6 +24,7 @@ type AppSettingsContextValue = {
 export const DEFAULT_CATEGORIES: AppSettings['categories'] = [
   { id: 'health', label: 'Health', color: '#22C55E' },
   { id: 'work', label: 'Work', color: '#3B82F6' },
+  { id: 'chores', label: 'Chores', color: '#EC4899' },
   { id: 'hobbies', label: 'Hobbies', color: '#8B5CF6' },
   { id: 'break', label: 'Break', color: '#F59E0B' },
   { id: 'other', label: 'None', color: '#9CA3AF' },

@@ -6,6 +6,8 @@ const {
   roundTo15,
   parseHHMM,
   formatHHMM,
+  formatMinutesAmPm,
+  parseTimeText,
   formatDuration,
 } = require('../src/utils/time.ts');
 
@@ -41,6 +43,30 @@ test('formatHHMM clamps and formats output', () => {
   assert.equal(formatHHMM(1440), '24:00');
   assert.equal(formatHHMM(1500), '24:00');
   assert.equal(formatHHMM(-5), '00:00');
+});
+
+test('formatMinutesAmPm formats using 12-hour time', () => {
+  assert.equal(formatMinutesAmPm(0), '12:00 AM');
+  assert.equal(formatMinutesAmPm(545), '9:05 AM');
+  assert.equal(formatMinutesAmPm(720), '12:00 PM');
+  assert.equal(formatMinutesAmPm(1439), '11:59 PM');
+  assert.equal(formatMinutesAmPm(1440), '12:00 AM');
+  assert.equal(formatMinutesAmPm(1439, { includePeriod: false }), '11:59');
+});
+
+test('parseTimeText accepts both 24-hour and 12-hour labels', () => {
+  assert.equal(parseTimeText('00:00'), 0);
+  assert.equal(parseTimeText('24:00'), 1440);
+  assert.equal(parseTimeText('9:05'), 545);
+
+  assert.equal(parseTimeText('12:00 AM'), 0);
+  assert.equal(parseTimeText('12:00 PM'), 720);
+  assert.equal(parseTimeText('1:15 pm'), 13 * 60 + 15);
+  assert.equal(parseTimeText('11:59PM'), 23 * 60 + 59);
+
+  assert.equal(parseTimeText('13:00 PM'), null);
+  assert.equal(parseTimeText('0:30 AM'), null);
+  assert.equal(parseTimeText('bad'), null);
 });
 
 test('formatDuration formats minutes into human readable text', () => {

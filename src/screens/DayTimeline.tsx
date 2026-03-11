@@ -18,14 +18,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
-import { Block, PIXELS_PER_MINUTE } from '@/src/components/Block';
+import { Block, PIXELS_PER_MINUTE as BASE_PIXELS_PER_MINUTE } from '@/src/components/Block';
 import { BlockEditorModal } from '@/src/components/BlockEditorModal';
 import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryColor, getCategoryLabel } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { deleteBlock, getBlocksForDay, getBlocksForDayRange, insertBlock, updateBlock } from '@/src/storage/blocksDb';
-import type { Block as TimeBlock, Lane } from '@/src/types/blocks';
+import type { Block as TimeBlock, BlockRepeatPreset, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
-import { clamp, formatHHMM, parseHHMM, roundTo15 } from '@/src/utils/time';
+import { clamp, formatHHMM, formatMinutesAmPm, parseHHMM, roundTo15 } from '@/src/utils/time';
 
 type ViewMode = 'compare' | 'planned' | 'actual';
 
@@ -38,6 +38,8 @@ type EditorState = {
   tags: string[];
   startText: string;
   endText: string;
+  repeatPreset: BlockRepeatPreset;
+  repeatUntilDayKey: string;
   linkedPlannedId: string | null;
   errorText: string | null;
 };
@@ -90,12 +92,15 @@ type CalendarMonth = {
 };
 
 const MINUTES_PER_DAY = 24 * 60;
-const TIMELINE_HEIGHT = MINUTES_PER_DAY * PIXELS_PER_MINUTE;
+const TIMELINE_HEIGHT = MINUTES_PER_DAY * BASE_PIXELS_PER_MINUTE;
 const TIME_GUTTER_WIDTH = 54;
 const SHEET_VISIBLE_HEIGHT = '86%';
 const NOW_BUBBLE_HEIGHT = 20;
 const NOW_COLOR = '#FF3B30';
 const NOW_LINE_CONNECT_OFFSET = 4;
+const MIN_TIMELINE_ZOOM = 0.8;
+const MAX_TIMELINE_ZOOM = 3;
+const PINCH_ZOOM_UPDATE_STEP = 0.015;
 const FEEDBACK_DURATION_MS = 1500;
 const CREATE_THRESHOLD_PX = 16;
 const CREATE_DELAY_MS = 260;
@@ -118,6 +123,8 @@ const INITIAL_EDITOR_STATE: EditorState = {
   tags: [],
   startText: '08:00',
   endText: '09:00',
+  repeatPreset: 'none',
+  repeatUntilDayKey: getLocalDayKey(),
   linkedPlannedId: null,
   errorText: null,
 };
@@ -153,6 +160,63 @@ function parseDayKeyParam(input: string | string[] | undefined): string | null {
   }
 
   return dayKeyToLocalDate(raw) ? raw : null;
+}
+
+function shouldIncludeRepeatDay(
+  dayOfWeek: number,
+  startDayOfWeek: number,
+  repeatPreset: BlockRepeatPreset
+): boolean {
+  if (repeatPreset === 'daily') {
+    return true;
+  }
+
+  if (repeatPreset === 'weekdays') {
+    return dayOfWeek >= 1 && dayOfWeek <= 5;
+  }
+
+  return dayOfWeek === startDayOfWeek;
+}
+
+function buildRepeatDayKeys(
+  startDayKey: string,
+  repeatUntilDayKey: string,
+  repeatPreset: BlockRepeatPreset
+): string[] {
+  if (repeatPreset === 'none') {
+    return [startDayKey];
+  }
+
+  const startDate = dayKeyToLocalDate(startDayKey);
+  const repeatUntilDate = dayKeyToLocalDate(repeatUntilDayKey);
+  if (!startDate || !repeatUntilDate || repeatUntilDayKey < startDayKey) {
+    return [];
+  }
+
+  const startDayOfWeek = startDate.getDay();
+  const selectedDayKeys: string[] = [];
+  let cursorDayKey = startDayKey;
+
+  while (cursorDayKey <= repeatUntilDayKey) {
+    const cursorDate = dayKeyToLocalDate(cursorDayKey);
+
+    if (!cursorDate) {
+      break;
+    }
+
+    if (shouldIncludeRepeatDay(cursorDate.getDay(), startDayOfWeek, repeatPreset)) {
+      selectedDayKeys.push(cursorDayKey);
+    }
+
+    const nextDayKey = shiftDayKey(cursorDayKey, 1);
+    if (nextDayKey === cursorDayKey) {
+      break;
+    }
+
+    cursorDayKey = nextDayKey;
+  }
+
+  return selectedDayKeys;
 }
 
 function getMonthStart(date: Date): Date {
@@ -210,21 +274,7 @@ function buildCalendarMonths(anchorDate: Date): CalendarMonth[] {
 }
 
 function formatCurrentTimeLabel(min: number): string {
-  const safe = clamp(Math.round(min), 0, MINUTES_PER_DAY - 1);
-  const hour24 = Math.floor(safe / 60);
-  const minute = safe % 60;
-  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  return `${hour12}:${String(minute).padStart(2, '0')}`;
-}
-
-function formatAmPm(min: number): string {
-  const rounded = Math.max(0, Math.min(MINUTES_PER_DAY, Math.round(min)));
-  const safe = rounded === MINUTES_PER_DAY ? 0 : rounded;
-  const hours24 = Math.floor(safe / 60);
-  const minutes = safe % 60;
-  const period = hours24 >= 12 ? 'PM' : 'AM';
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
-  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`;
+  return formatMinutesAmPm(clamp(Math.round(min), 0, MINUTES_PER_DAY - 1), { includePeriod: false });
 }
 
 function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
@@ -338,12 +388,12 @@ function normalizeDraftRange(anchorMin: number, cursorMin: number): { startMin: 
   };
 }
 
-function minuteFromGestureY(y: number): number | null {
-  if (!Number.isFinite(y)) {
+function minuteFromGestureY(y: number, pixelsPerMinute: number): number | null {
+  if (!Number.isFinite(y) || !Number.isFinite(pixelsPerMinute) || pixelsPerMinute <= 0) {
     return null;
   }
 
-  const minute = Math.floor(y / PIXELS_PER_MINUTE);
+  const minute = Math.floor(y / pixelsPerMinute);
 
   if (!Number.isFinite(minute)) {
     return null;
@@ -402,6 +452,7 @@ export default function DayTimeline() {
   const [draftCreate, setDraftCreate] = useState<DraftCreateState | null>(null);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
   const [dragPreviewById, setDragPreviewById] = useState<Record<string, { startMin: number; endMin: number }>>({});
+  const [timelineZoom, setTimelineZoom] = useState(1);
   const draftCreateRef = useRef<DraftCreateState | null>(null);
   const createHapticKeyRef = useRef<string | null>(null);
   const draftCandidateRef = useRef<DraftCandidate | null>(null);
@@ -414,9 +465,15 @@ export default function DayTimeline() {
   const calendarListRef = useRef<FlatList<CalendarMonth> | null>(null);
   const calendarInitialPositionedRef = useRef(false);
   const timelineViewportTopRef = useRef(0);
+  const timelineViewportHeightRef = useRef(0);
   const timelineScrollOffsetYRef = useRef(0);
+  const timelineZoomRef = useRef(1);
+  const pinchStartZoomRef = useRef(1);
+  const pinchLastAppliedZoomRef = useRef(1);
+  const pendingZoomScrollYRef = useRef<number | null>(null);
   const autoScrolledDayKeyRef = useRef<string | null>(null);
   const pendingJumpToNowRef = useRef(false);
+  const pixelsPerMinute = BASE_PIXELS_PER_MINUTE * timelineZoom;
 
   const todayDayKey = getLocalDayKey();
   const isFutureDay = dayKey > todayDayKey;
@@ -598,7 +655,7 @@ export default function DayTimeline() {
       plannedMinutes: plannedTotalMin,
       doneMinutes: doneTotalMin,
       executionDoneMinutes,
-      executionScorePercent: Math.min(100, Math.round(executionScoreRaw)),
+      executionScorePercent: Math.round(executionScoreRaw),
     };
   }, [doneTotalMin, isFutureDay, plannedTotalMin]);
 
@@ -661,7 +718,7 @@ export default function DayTimeline() {
               }
             }
 
-            nextScores[cell.dayKey] = plannedMinutes > 0 ? Math.min(100, Math.round((doneMinutes / plannedMinutes) * 100)) : null;
+            nextScores[cell.dayKey] = plannedMinutes > 0 ? Math.round((doneMinutes / plannedMinutes) * 100) : null;
           }
         }
 
@@ -711,8 +768,95 @@ export default function DayTimeline() {
 
     const relativeY =
       absoluteY - timelineViewportTopRef.current + timelineScrollOffsetYRef.current;
-    return minuteFromGestureY(relativeY);
-  }, []);
+    return minuteFromGestureY(relativeY, pixelsPerMinute);
+  }, [pixelsPerMinute]);
+
+  const applyTimelineZoom = useCallback(
+    (nextZoom: number, focalAbsoluteY: number | null) => {
+      const clampedZoom = clamp(nextZoom, MIN_TIMELINE_ZOOM, MAX_TIMELINE_ZOOM);
+      const previousZoom = timelineZoomRef.current;
+
+      if (Math.abs(clampedZoom - previousZoom) < 0.0005) {
+        return;
+      }
+
+      const previousPixelsPerMinute = BASE_PIXELS_PER_MINUTE * previousZoom;
+      const nextPixelsPerMinute = BASE_PIXELS_PER_MINUTE * clampedZoom;
+      const viewportHeight = timelineViewportHeightRef.current;
+      const fallbackAnchor = viewportHeight > 0 ? viewportHeight / 2 : 0;
+      const anchorViewportY =
+        focalAbsoluteY == null || !Number.isFinite(focalAbsoluteY)
+          ? fallbackAnchor
+          : clamp(focalAbsoluteY - timelineViewportTopRef.current, 0, Math.max(viewportHeight, 0));
+      const minuteAtAnchor =
+        (timelineScrollOffsetYRef.current + anchorViewportY) / Math.max(previousPixelsPerMinute, 0.001);
+      const nextTimelineHeight = MINUTES_PER_DAY * nextPixelsPerMinute + insets.bottom;
+      const maxScrollY = Math.max(0, nextTimelineHeight - viewportHeight);
+      const targetScrollY = clamp(minuteAtAnchor * nextPixelsPerMinute - anchorViewportY, 0, maxScrollY);
+
+      timelineZoomRef.current = clampedZoom;
+      pendingZoomScrollYRef.current = targetScrollY;
+      setTimelineZoom(clampedZoom);
+    },
+    [insets.bottom]
+  );
+
+  const handlePinchZoomUpdate = useCallback(
+    (gestureScale: number, focalY: number) => {
+      if (!Number.isFinite(gestureScale) || gestureScale <= 0) {
+        return;
+      }
+
+      const nextZoom = clamp(
+        pinchStartZoomRef.current * gestureScale,
+        MIN_TIMELINE_ZOOM,
+        MAX_TIMELINE_ZOOM
+      );
+
+      if (Math.abs(nextZoom - pinchLastAppliedZoomRef.current) < PINCH_ZOOM_UPDATE_STEP) {
+        return;
+      }
+
+      pinchLastAppliedZoomRef.current = nextZoom;
+      applyTimelineZoom(nextZoom, focalY);
+    },
+    [applyTimelineZoom]
+  );
+
+  const handlePinchZoomFinalize = useCallback(
+    (gestureScale: number, focalY: number) => {
+      if (!Number.isFinite(gestureScale) || gestureScale <= 0) {
+        return;
+      }
+
+      const nextZoom = clamp(
+        pinchStartZoomRef.current * gestureScale,
+        MIN_TIMELINE_ZOOM,
+        MAX_TIMELINE_ZOOM
+      );
+      pinchLastAppliedZoomRef.current = nextZoom;
+      applyTimelineZoom(nextZoom, focalY);
+    },
+    [applyTimelineZoom]
+  );
+
+  const pinchTimelineGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .enabled(activeDragId === null && !isCreatingDraft)
+        .runOnJS(true)
+        .onBegin(() => {
+          pinchStartZoomRef.current = timelineZoomRef.current;
+          pinchLastAppliedZoomRef.current = timelineZoomRef.current;
+        })
+        .onUpdate((event) => {
+          handlePinchZoomUpdate(event.scale, event.focalY);
+        })
+        .onEnd((event) => {
+          handlePinchZoomFinalize(event.scale, event.focalY);
+        }),
+    [activeDragId, handlePinchZoomFinalize, handlePinchZoomUpdate, isCreatingDraft]
+  );
 
   const closeEditor = useCallback(() => {
     setEditorState((current) => ({ ...current, visible: false, errorText: null }));
@@ -766,6 +910,10 @@ export default function DayTimeline() {
   }, [dayKey, dataReloadTick, dataVersion]);
 
   useEffect(() => {
+    timelineZoomRef.current = timelineZoom;
+  }, [timelineZoom]);
+
+  useEffect(() => {
     if (autoScrolledDayKeyRef.current === dayKey) {
       return;
     }
@@ -775,10 +923,11 @@ export default function DayTimeline() {
 
     const targetMinute =
       dayKey === todayDayKey ? Math.max(0, nowMinute - 90) : 8 * 60;
-    const targetY = targetMinute * PIXELS_PER_MINUTE;
+    const targetY = targetMinute * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
 
     const timer = setTimeout(() => {
       timelineScrollRef.current?.scrollTo({ y: targetY, animated: false });
+      timelineScrollOffsetYRef.current = targetY;
       autoScrolledDayKeyRef.current = dayKey;
     }, 0);
 
@@ -791,14 +940,32 @@ export default function DayTimeline() {
     }
 
     const timer = setTimeout(() => {
-      const targetY = Math.max(0, nowMinute - 90) * PIXELS_PER_MINUTE;
+      const targetY = Math.max(0, nowMinute - 90) * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
       timelineScrollRef.current?.scrollTo({ y: targetY, animated: true });
+      timelineScrollOffsetYRef.current = targetY;
       autoScrolledDayKeyRef.current = todayDayKey;
       pendingJumpToNowRef.current = false;
     }, 0);
 
     return () => clearTimeout(timer);
   }, [dayKey, nowMinute, todayDayKey]);
+
+  useEffect(() => {
+    if (pendingZoomScrollYRef.current == null) {
+      return;
+    }
+
+    const targetY = pendingZoomScrollYRef.current;
+    pendingZoomScrollYRef.current = null;
+
+    const timer = setTimeout(() => {
+      timelineScrollRef.current?.scrollTo({ y: targetY, animated: false });
+      timelineScrollOffsetYRef.current = targetY;
+      syncTimelineViewportTop();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [syncTimelineViewportTop, timelineZoom]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -846,11 +1013,13 @@ export default function DayTimeline() {
         tags: [],
         startText: formatHHMM(startMin),
         endText: formatHHMM(endMin),
+        repeatPreset: 'none',
+        repeatUntilDayKey: dayKey,
         linkedPlannedId: null,
         errorText: null,
       });
     },
-    []
+    [dayKey]
   );
 
   const openEditEditor = useCallback((block: TimeBlock) => {
@@ -863,10 +1032,12 @@ export default function DayTimeline() {
       tags: toSingleCategory(block.tags),
       startText: formatHHMM(block.startMin),
       endText: formatHHMM(block.endMin),
+      repeatPreset: 'none',
+      repeatUntilDayKey: dayKey,
       linkedPlannedId: block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
       errorText: null,
     });
-  }, []);
+  }, [dayKey]);
 
   const goToPreviousDay = useCallback(() => {
     closeEditor();
@@ -875,8 +1046,9 @@ export default function DayTimeline() {
 
   const scrollToNow = useCallback(
     (animated: boolean) => {
-      const targetY = Math.max(0, nowMinute - 90) * PIXELS_PER_MINUTE;
+      const targetY = Math.max(0, nowMinute - 90) * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
       timelineScrollRef.current?.scrollTo({ y: targetY, animated });
+      timelineScrollOffsetYRef.current = targetY;
       autoScrolledDayKeyRef.current = todayDayKey;
     },
     [nowMinute, todayDayKey]
@@ -1232,13 +1404,13 @@ export default function DayTimeline() {
     if (parsedStart === null || parsedEnd === null) {
       setEditorState((current) => ({
         ...current,
-        errorText: 'Enter start and end using HH:MM (24-hour time).',
+        errorText: 'Enter a valid start and end time.',
       }));
       return;
     }
 
-    const startMin = roundTo15(parsedStart);
-    const endMin = roundTo15(parsedEnd);
+    const startMin = parsedStart;
+    const endMin = parsedEnd;
     const normalizedLinkedPlannedId =
       editorState.linkedPlannedId && plannedLinkOptions.some((option) => option.id === editorState.linkedPlannedId)
         ? editorState.linkedPlannedId
@@ -1247,7 +1419,7 @@ export default function DayTimeline() {
     if (startMin < 0 || endMin > MINUTES_PER_DAY || endMin <= startMin) {
       setEditorState((current) => ({
         ...current,
-        errorText: 'Time range must be within 00:00 to 24:00 and end after start.',
+        errorText: 'Time range must stay within the day and end after start.',
       }));
       return;
     }
@@ -1295,11 +1467,6 @@ export default function DayTimeline() {
       return;
     }
 
-    if (hasOverlap(editorState.lane, null, startMin, endMin, sortedBlocks)) {
-      Alert.alert('Invalid time', 'Time overlaps another block.');
-      return;
-    }
-
     const newBlockInput: Omit<TimeBlock, 'id'> = {
       lane: editorState.lane,
       title,
@@ -1308,19 +1475,96 @@ export default function DayTimeline() {
       endMin,
       linkedPlannedId: editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined,
     };
+    const repeatUntilDayKeyRaw = editorState.repeatUntilDayKey.trim();
+    const repeatUntilDayKey =
+      editorState.repeatPreset === 'none' ? dayKey : repeatUntilDayKeyRaw;
+
+    if (editorState.repeatPreset !== 'none') {
+      if (!dayKeyToLocalDate(repeatUntilDayKey)) {
+        setEditorState((current) => ({
+          ...current,
+          errorText: 'Repeat until must be a valid date (YYYY-MM-DD).',
+        }));
+        return;
+      }
+
+      if (repeatUntilDayKey < dayKey) {
+        setEditorState((current) => ({
+          ...current,
+          errorText: 'Repeat until cannot be before this day.',
+        }));
+        return;
+      }
+    }
+
+    const targetDayKeys = buildRepeatDayKeys(dayKey, repeatUntilDayKey, editorState.repeatPreset);
+    if (targetDayKeys.length === 0) {
+      setEditorState((current) => ({
+        ...current,
+        errorText: 'No days match the selected repeat rule.',
+      }));
+      return;
+    }
 
     void (async () => {
+      const blocksByDayCache = new Map<string, TimeBlock[]>();
+      blocksByDayCache.set(dayKey, sortedBlocks);
+      const insertedBlocksOnCurrentDay: TimeBlock[] = [];
+      let insertedCount = 0;
+      let skippedCount = 0;
+
       try {
-        const insertedBlock = await insertBlock(newBlockInput, dayKey);
-        setBlocks((current) => sortByStartMin([...current, insertedBlock]));
+        for (const targetDayKey of targetDayKeys) {
+          let dayBlocks = blocksByDayCache.get(targetDayKey);
+
+          if (!dayBlocks) {
+            dayBlocks = await getBlocksForDay(targetDayKey);
+            blocksByDayCache.set(targetDayKey, dayBlocks);
+          }
+
+          if (hasOverlap(editorState.lane, null, startMin, endMin, dayBlocks)) {
+            skippedCount += 1;
+            continue;
+          }
+
+          const insertedBlock = await insertBlock(newBlockInput, targetDayKey);
+          insertedCount += 1;
+          const nextDayBlocks = sortByStartMin([...dayBlocks, insertedBlock]);
+          blocksByDayCache.set(targetDayKey, nextDayBlocks);
+
+          if (targetDayKey === dayKey) {
+            insertedBlocksOnCurrentDay.push(insertedBlock);
+          }
+        }
+
+        if (insertedCount === 0) {
+          if (editorState.repeatPreset === 'none') {
+            Alert.alert('Invalid time', 'Time overlaps another block.');
+          } else {
+            Alert.alert('Nothing created', 'All repeated blocks overlap existing blocks.');
+          }
+          return;
+        }
+
+        if (insertedBlocksOnCurrentDay.length > 0) {
+          setBlocks((current) => sortByStartMin([...current, ...insertedBlocksOnCurrentDay]));
+        }
+
         setLastUsedCreateLane(editorState.lane);
         void triggerSuccessHaptic();
         closeEditor();
+
+        if (editorState.repeatPreset !== 'none' && skippedCount > 0) {
+          showFeedback(`Created ${insertedCount}; skipped ${skippedCount} overlaps.`);
+        }
       } catch {
-        Alert.alert('Storage error', 'Could not create block.');
+        if (insertedCount > 0) {
+          setDataReloadTick((current) => current + 1);
+        }
+        Alert.alert('Storage error', insertedCount > 0 ? 'Some blocks were created before an error.' : 'Could not create block.');
       }
     })();
-  }, [closeEditor, dayKey, editorState, plannedLinkOptions, sortedBlocks]);
+  }, [closeEditor, dayKey, editorState, plannedLinkOptions, showFeedback, sortedBlocks]);
 
   const isEditorSaveDisabled = useMemo(() => {
     const titleValid = editorState.title.trim().length > 0;
@@ -1332,20 +1576,36 @@ export default function DayTimeline() {
       return true;
     }
 
-    const startMin = roundTo15(parsedStart);
-    const endMin = roundTo15(parsedEnd);
+    const startMin = parsedStart;
+    const endMin = parsedEnd;
 
     if (startMin < 0 || endMin > MINUTES_PER_DAY || endMin <= startMin) {
       return true;
     }
 
+    if (editorState.mode === 'create' && editorState.repeatPreset !== 'none') {
+      const repeatUntilDayKey = editorState.repeatUntilDayKey.trim();
+      if (!dayKeyToLocalDate(repeatUntilDayKey) || repeatUntilDayKey < dayKey) {
+        return true;
+      }
+
+      if (buildRepeatDayKeys(dayKey, repeatUntilDayKey, editorState.repeatPreset).length === 0) {
+        return true;
+      }
+
+      return false;
+    }
+
     const ignoreId = editorState.mode === 'edit' ? editorState.blockId : null;
     return hasOverlap(editorState.lane, ignoreId, startMin, endMin, sortedBlocks);
   }, [
+    dayKey,
     editorState.blockId,
     editorState.endText,
     editorState.lane,
     editorState.mode,
+    editorState.repeatPreset,
+    editorState.repeatUntilDayKey,
     editorState.startText,
     editorState.tags.length,
     editorState.title,
@@ -1648,11 +1908,11 @@ export default function DayTimeline() {
     };
   }, [focusedPlannedId, sortedBlocks, visibleCategoryIdSet]);
 
-  const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * PIXELS_PER_MINUTE;
+  const nowOffset = clamp(nowMinute, 0, MINUTES_PER_DAY) * pixelsPerMinute;
   const nowTimeLabel = formatCurrentTimeLabel(nowMinute);
-  const timelineCanvasHeight = TIMELINE_HEIGHT + insets.bottom;
+  const timelineCanvasHeight = MINUTES_PER_DAY * pixelsPerMinute + insets.bottom;
   const hourLineOffsets = useMemo(() => {
-    const baseOffsets = Array.from({ length: 25 }, (_, index) => index * 60 * PIXELS_PER_MINUTE);
+    const baseOffsets = Array.from({ length: 25 }, (_, index) => index * 60 * pixelsPerMinute);
     const bottomRuleOffset = Math.max(0, timelineCanvasHeight - StyleSheet.hairlineWidth);
     const lastBaseOffset = baseOffsets[baseOffsets.length - 1] ?? 0;
 
@@ -1661,7 +1921,7 @@ export default function DayTimeline() {
     }
 
     return baseOffsets;
-  }, [timelineCanvasHeight]);
+  }, [pixelsPerMinute, timelineCanvasHeight]);
   const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
     ? 'compare'
     : laneVisibility.planned
@@ -1921,21 +2181,26 @@ export default function DayTimeline() {
             </View>
           </View>
 
-          <ScrollView
-            ref={timelineScrollRef}
-            scrollEnabled={activeDragId === null && !isCreatingDraft}
-            style={styles.scrollView}
-            contentContainerStyle={[styles.scrollContent, { minHeight: timelineCanvasHeight }]}
-            onLayout={syncTimelineViewportTop}
-            onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
-              timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
-            }}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator>
+          <GestureDetector gesture={pinchTimelineGesture}>
+            <View style={styles.timelineGestureWrap}>
+              <ScrollView
+                ref={timelineScrollRef}
+                scrollEnabled={activeDragId === null && !isCreatingDraft}
+                style={styles.scrollView}
+                contentContainerStyle={[styles.scrollContent, { minHeight: timelineCanvasHeight }]}
+                onLayout={(event) => {
+                  timelineViewportHeightRef.current = event.nativeEvent.layout.height;
+                  syncTimelineViewportTop();
+                }}
+                onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+                  timelineScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+                }}
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator>
         <View style={[styles.timelineBody, { height: timelineCanvasHeight }]}>
           <View style={styles.timeColumn}>
             {Array.from({ length: 24 }, (_, hour) => {
-              const top = hour * 60 * PIXELS_PER_MINUTE;
+              const top = hour * 60 * pixelsPerMinute;
 
               return (
                 <View key={hour} style={[styles.hourLabelWrap, { top }]}>
@@ -1993,6 +2258,7 @@ export default function DayTimeline() {
                       categoryColorMap={categoryColorMap}
                       interactive={!dimmed}
                       dimmed={dimmed}
+                      pixelsPerMinute={pixelsPerMinute}
                     />
                     ))}
                     {draftCreate && selectedLane === lane ? (
@@ -2001,13 +2267,13 @@ export default function DayTimeline() {
                         style={[
                           styles.draftBlock,
                           {
-                            top: draftCreate.startMin * PIXELS_PER_MINUTE,
-                            height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
+                            top: draftCreate.startMin * pixelsPerMinute,
+                            height: (draftCreate.endMin - draftCreate.startMin) * pixelsPerMinute,
                           },
                           draftCreate.invalid && styles.draftBlockInvalid,
                         ]}>
                         <Text style={styles.draftBlockText}>
-                          {formatAmPm(draftCreate.startMin)}-{formatAmPm(draftCreate.endMin)}
+                          {formatMinutesAmPm(draftCreate.startMin)}-{formatMinutesAmPm(draftCreate.endMin)}
                         </Text>
                       </View>
                     ) : null}
@@ -2055,6 +2321,7 @@ export default function DayTimeline() {
                     categoryColorMap={categoryColorMap}
                     interactive={!dimmed}
                     dimmed={dimmed}
+                    pixelsPerMinute={pixelsPerMinute}
                   />
                 ))}
 
@@ -2064,13 +2331,13 @@ export default function DayTimeline() {
                     style={[
                       styles.draftBlock,
                       {
-                        top: draftCreate.startMin * PIXELS_PER_MINUTE,
-                        height: (draftCreate.endMin - draftCreate.startMin) * PIXELS_PER_MINUTE,
+                        top: draftCreate.startMin * pixelsPerMinute,
+                        height: (draftCreate.endMin - draftCreate.startMin) * pixelsPerMinute,
                       },
                       draftCreate.invalid && styles.draftBlockInvalid,
                     ]}>
                     <Text style={styles.draftBlockText}>
-                      {formatAmPm(draftCreate.startMin)}-{formatAmPm(draftCreate.endMin)}
+                      {formatMinutesAmPm(draftCreate.startMin)}-{formatMinutesAmPm(draftCreate.endMin)}
                     </Text>
                   </View>
                 ) : null}
@@ -2090,7 +2357,9 @@ export default function DayTimeline() {
             </>
           ) : null}
         </View>
-          </ScrollView>
+              </ScrollView>
+            </View>
+          </GestureDetector>
         </View>
 
       {feedbackMessage ? <Text style={[styles.feedbackText, { bottom: 8 + insets.bottom }]}>{feedbackMessage}</Text> : null}
@@ -2103,6 +2372,8 @@ export default function DayTimeline() {
         selectedTags={editorState.tags}
         startValue={editorState.startText}
         endValue={editorState.endText}
+        repeatPreset={editorState.repeatPreset}
+        repeatUntilDayKey={editorState.repeatUntilDayKey}
         linkedPlannedId={editorState.linkedPlannedId}
         categoryOptions={categoryOptions}
         plannedLinkOptions={plannedLinkOptions}
@@ -2111,6 +2382,12 @@ export default function DayTimeline() {
         onToggleTag={toggleEditorTag}
         onChangeStart={(value) => setEditorField('startText', value)}
         onChangeEnd={(value) => setEditorField('endText', value)}
+        onChangeRepeatPreset={(value) =>
+          setEditorState((current) => ({ ...current, repeatPreset: value, errorText: null }))
+        }
+        onChangeRepeatUntilDayKey={(value) =>
+          setEditorState((current) => ({ ...current, repeatUntilDayKey: value, errorText: null }))
+        }
         onChangeLane={setEditorLane}
         onChangeLinkedPlannedId={(value) =>
           setEditorState((current) => ({ ...current, linkedPlannedId: value, errorText: null }))
@@ -2480,6 +2757,9 @@ const styles = StyleSheet.create({
     borderRadius: 0,
     backgroundColor: UI_COLORS.glassSurface,
     overflow: 'hidden',
+  },
+  timelineGestureWrap: {
+    flex: 1,
   },
   scrollContent: {
     minHeight: TIMELINE_HEIGHT,
