@@ -23,9 +23,8 @@ import { seedLastNDays } from '@/src/dev/seedData';
 import { clearAllBlocks, getAllBlocksByDay, getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
 import type { Block as TimeBlock, BlockRepeatRule, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
-import { isExcludedFromExecutionMetrics } from '@/src/utils/executionScore';
 import { normalizeRepeatRule } from '@/src/utils/recurrence';
-import { formatDuration, formatMinutesAmPm, parseTimeText } from '@/src/utils/time';
+import { parseTimeText } from '@/src/utils/time';
 
 const CATEGORY_COLORS = [
   '#3B82F6',
@@ -72,6 +71,7 @@ type ParsedSummaryBlock = {
 };
 
 const FULL_BACKUP_SCHEMA = 'plan-vs-actual.backup.v1';
+const DAY_BACKUP_SCHEMA = 'plan-vs-actual.day-backup.v1';
 const PROTECTED_CATEGORIES: AppSettings['categories'] = [
   { id: 'break', label: 'Break', color: '#F59E0B' },
   { id: 'other', label: 'None', color: '#9CA3AF' },
@@ -100,6 +100,18 @@ type FullBackupPayload = {
 type ParsedFullBackupInput = {
   settings: AppSettings;
   blocksByDay: Record<string, ImportedBackupBlock[]>;
+};
+
+type DayBackupPayload = {
+  schema: typeof DAY_BACKUP_SCHEMA;
+  exportedAt: string;
+  dayKey: string;
+  blocks: TimeBlock[];
+};
+
+type ParsedDayBackupInput = {
+  dayKey: string;
+  blocks: ImportedBackupBlock[];
 };
 
 function isRecord(input: unknown): input is Record<string, unknown> {
@@ -324,7 +336,44 @@ function parseFullBackupInput(input: string, fallbackSettings: AppSettings): Par
   }
 }
 
-function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
+function parseDayBackupInput(input: string): ParsedDayBackupInput | null {
+  try {
+    const parsed = JSON.parse(input);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+
+    if (parsed.schema !== DAY_BACKUP_SCHEMA) {
+      return null;
+    }
+
+    if (typeof parsed.dayKey !== 'string' || !dayKeyToLocalDate(parsed.dayKey)) {
+      return null;
+    }
+
+    if (!Array.isArray(parsed.blocks)) {
+      return null;
+    }
+
+    const blocks: ImportedBackupBlock[] = [];
+    for (let index = 0; index < parsed.blocks.length; index += 1) {
+      const parsedBlock = parseImportedBackupBlock(parsed.blocks[index], `${parsed.dayKey}-${index + 1}`, parsed.dayKey);
+      if (!parsedBlock) {
+        return null;
+      }
+      blocks.push(parsedBlock);
+    }
+
+    return {
+      dayKey: parsed.dayKey,
+      blocks,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sortByStartMin<T extends { id: string; startMin: number; endMin: number }>(items: T[]): T[] {
   return [...items].sort(
     (a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.id.localeCompare(b.id)
   );
@@ -343,44 +392,6 @@ function hasOverlap(
 
     return startMin < other.endMin && endMin > other.startMin;
   });
-}
-
-function formatBlockLine(block: TimeBlock): string {
-  const tagsText = block.tags.length > 0 ? block.tags.join(', ') : 'none';
-  return `${formatMinutesAmPm(block.startMin)}-${formatMinutesAmPm(block.endMin)} | ${block.title} | tags: ${tagsText}`;
-}
-
-function buildTagTotals(
-  blocks: TimeBlock[]
-): { tag: string; plannedMin: number; actualMin: number; deltaMin: number }[] {
-  const totals = new Map<string, { plannedMin: number; actualMin: number }>();
-
-  blocks.forEach((block) => {
-    const duration = Math.max(0, block.endMin - block.startMin);
-    block.tags.forEach((rawTag) => {
-      const tag = rawTag.trim().toLowerCase();
-      if (!tag) {
-        return;
-      }
-
-      const current = totals.get(tag) ?? { plannedMin: 0, actualMin: 0 };
-      if (block.lane === 'planned') {
-        current.plannedMin += duration;
-      } else {
-        current.actualMin += duration;
-      }
-      totals.set(tag, current);
-    });
-  });
-
-  return [...totals.entries()]
-    .map(([tag, value]) => ({
-      tag,
-      plannedMin: value.plannedMin,
-      actualMin: value.actualMin,
-      deltaMin: value.actualMin - value.plannedMin,
-    }))
-    .sort((a, b) => b.actualMin - a.actualMin || a.tag.localeCompare(b.tag));
 }
 
 function parseSummaryBlockLine(line: string, lane: Lane): ParsedSummaryBlock | null {
@@ -603,10 +614,6 @@ export default function SettingsScreen() {
   const copyPlanCalendarCells = useMemo(
     () => buildCalendarDayCells(copyPlanCalendarMonthStart),
     [copyPlanCalendarMonthStart]
-  );
-  const timelineTagTotals = useMemo(
-    () => buildTagTotals(timelineBlocks.filter((block) => !isExcludedFromExecutionMetrics(block))),
-    [timelineBlocks]
   );
   const visibleCategoryIdSet = useMemo(
     () => new Set(settings.visibleCategoryIds.map((id) => id.toLowerCase())),
@@ -983,44 +990,26 @@ export default function SettingsScreen() {
   }, [settings]);
 
   const exportTimelineDayData = useCallback(() => {
-    const metricBlocks = timelineBlocks.filter((block) => !isExcludedFromExecutionMetrics(block));
-    const plannedBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'planned'));
-    const actualBlocks = sortByStartMin(metricBlocks.filter((block) => block.lane === 'actual'));
-    const plannedTotal = plannedBlocks.reduce((total, block) => total + Math.max(0, block.endMin - block.startMin), 0);
-    const doneTotal = actualBlocks.reduce((total, block) => total + Math.max(0, block.endMin - block.startMin), 0);
-    const tagLines = timelineTagTotals.length
-      ? timelineTagTotals
-          .map(
-            (row) =>
-              `${row.tag}: plan ${formatDuration(row.plannedMin)}, done ${formatDuration(
-                row.actualMin
-              )}, delta ${row.deltaMin >= 0 ? '+' : '-'}${formatDuration(row.deltaMin)}`
-          )
-          .join('\n')
-      : 'none';
-    const plannedLines = plannedBlocks.length ? plannedBlocks.map(formatBlockLine).join('\n') : 'none';
-    const actualLines = actualBlocks.length ? actualBlocks.map(formatBlockLine).join('\n') : 'none';
-    const summary = [
-      `Date: ${timelineDateLabel}`,
-      `Plan total: ${formatDuration(plannedTotal)}`,
-      `Done total: ${formatDuration(doneTotal)}`,
-      `Delta: ${doneTotal - plannedTotal >= 0 ? '+' : '-'}${formatDuration(doneTotal - plannedTotal)}`,
-      '',
-      'Tag totals:',
-      tagLines,
-      '',
-      'Plan blocks:',
-      plannedLines,
-      '',
-      'Done blocks:',
-      actualLines,
-    ].join('\n');
-
-    void Share.share({
-      message: summary,
-      title: `Day data ${timelineDayKey}`,
-    });
-  }, [timelineBlocks, timelineDateLabel, timelineDayKey, timelineTagTotals]);
+    void (async () => {
+      setSaving(true);
+      try {
+        const payload: DayBackupPayload = {
+          schema: DAY_BACKUP_SCHEMA,
+          exportedAt: new Date().toISOString(),
+          dayKey: timelineDayKey,
+          blocks: sortByStartMin(timelineBlocks),
+        };
+        await Share.share({
+          message: JSON.stringify(payload, null, 2),
+          title: `Plan vs Actual Day Backup (${timelineDayKey})`,
+        });
+      } catch {
+        Alert.alert('Export error', "Could not export today's data.");
+      } finally {
+        setSaving(false);
+      }
+    })();
+  }, [timelineBlocks, timelineDayKey]);
 
   const importData = useCallback(() => {
     const input = importDataText.trim();
@@ -1113,9 +1102,159 @@ export default function SettingsScreen() {
       return;
     }
 
+    const parsedDayBackup = parseDayBackupInput(input);
+    if (parsedDayBackup) {
+      Alert.alert(
+        "Import today's backup",
+        `Detected day backup JSON from ${parsedDayBackup.dayKey}. This imports into ${timelineDayKey}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Import',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setSaving(true);
+                try {
+                  const existingBlocks = sortByStartMin(await getBlocksForDay(timelineDayKey));
+                  const workingBlocks = [...existingBlocks];
+                  const existingIdentity = new Set(
+                    existingBlocks.map((block) =>
+                      getBlockIdentityKey({
+                        lane: block.lane,
+                        title: block.title,
+                        startMin: block.startMin,
+                        endMin: block.endMin,
+                      })
+                    )
+                  );
+                  const sourcePlannedToTargetId = new Map<string, string>();
+                  const targetPlannedByLinkKey = new Map<string, string>();
+                  existingBlocks.forEach((block) => {
+                    if (block.lane !== 'planned') {
+                      return;
+                    }
+                    targetPlannedByLinkKey.set(
+                      getPlanLinkKey({ title: block.title, startMin: block.startMin, endMin: block.endMin }),
+                      block.id
+                    );
+                  });
+                  const importedPlannedById = new Map<string, ImportedBackupBlock>();
+                  parsedDayBackup.blocks.forEach((block) => {
+                    if (block.lane === 'planned') {
+                      importedPlannedById.set(block.id, block);
+                    }
+                  });
+
+                  let created = 0;
+                  let skippedOverlap = 0;
+                  let skippedDuplicate = 0;
+                  let unresolvedLinks = 0;
+                  const sortedBlocks = [
+                    ...sortByStartMin(parsedDayBackup.blocks.filter((block) => block.lane === 'planned')),
+                    ...sortByStartMin(parsedDayBackup.blocks.filter((block) => block.lane === 'actual')),
+                  ];
+
+                  for (const block of sortedBlocks) {
+                    const identityKey = getBlockIdentityKey({
+                      lane: block.lane,
+                      title: block.title,
+                      startMin: block.startMin,
+                      endMin: block.endMin,
+                    });
+                    const planLinkKey = getPlanLinkKey({
+                      title: block.title,
+                      startMin: block.startMin,
+                      endMin: block.endMin,
+                    });
+
+                    if (existingIdentity.has(identityKey)) {
+                      skippedDuplicate += 1;
+                      if (block.lane === 'planned') {
+                        const existingPlannedId = targetPlannedByLinkKey.get(planLinkKey);
+                        if (existingPlannedId) {
+                          sourcePlannedToTargetId.set(block.id, existingPlannedId);
+                        }
+                      }
+                      continue;
+                    }
+
+                    if (hasOverlap(block.lane, block.startMin, block.endMin, workingBlocks)) {
+                      skippedOverlap += 1;
+                      continue;
+                    }
+
+                    let linkedPlannedId: string | null = null;
+                    if (block.lane === 'actual' && block.linkedPlannedId) {
+                      linkedPlannedId = sourcePlannedToTargetId.get(block.linkedPlannedId) ?? null;
+                      if (!linkedPlannedId) {
+                        const sourcePlanned = importedPlannedById.get(block.linkedPlannedId);
+                        if (sourcePlanned) {
+                          linkedPlannedId =
+                            targetPlannedByLinkKey.get(
+                              getPlanLinkKey({
+                                title: sourcePlanned.title,
+                                startMin: sourcePlanned.startMin,
+                                endMin: sourcePlanned.endMin,
+                              })
+                            ) ?? null;
+                        }
+                      }
+                      if (!linkedPlannedId) {
+                        unresolvedLinks += 1;
+                      }
+                    }
+
+                    const inserted = await insertBlock(
+                      {
+                        lane: block.lane,
+                        title: block.title,
+                        tags: [...block.tags],
+                        startMin: block.startMin,
+                        endMin: block.endMin,
+                        linkedPlannedId: block.lane === 'actual' ? linkedPlannedId : undefined,
+                        recurrenceId: block.recurrenceId ?? null,
+                        recurrenceIndex: block.recurrenceIndex ?? null,
+                        repeatRule: block.recurrenceId ? block.repeatRule ?? null : null,
+                      },
+                      timelineDayKey
+                    );
+
+                    workingBlocks.push(inserted);
+                    existingIdentity.add(identityKey);
+                    if (inserted.lane === 'planned') {
+                      targetPlannedByLinkKey.set(planLinkKey, inserted.id);
+                      sourcePlannedToTargetId.set(block.id, inserted.id);
+                    }
+                    created += 1;
+                  }
+
+                  signalDataChanged();
+                  setImportDataVisible(false);
+                  setImportDataText('');
+                  Alert.alert(
+                    'Import complete',
+                    `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, unresolved links ${unresolvedLinks}.`
+                  );
+                } catch {
+                  Alert.alert('Import error', "Could not import today's backup.");
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     const parsedSummary = parseSummaryInput(input);
     if (parsedSummary.blocks.length === 0) {
-      Alert.alert('Unsupported import', `Paste backup JSON from "Export all data" or text from "Export Today's data."`);
+      Alert.alert(
+        'Unsupported import',
+        `Paste backup JSON from "Export all data" or "Export Today's data", or text from older "Export Today's data" summaries.`
+      );
       return;
     }
 
@@ -1721,6 +1860,7 @@ export default function SettingsScreen() {
                 </Pressable>
               </View>
               <Text style={styles.toggleHint}>Paste backup JSON from Export all data, or text from Export Today&apos;s data.</Text>
+              <Text style={styles.toggleHint}>Day backup JSON includes all blocks and relations.</Text>
               <TextInput
                 value={importDataText}
                 onChangeText={setImportDataText}

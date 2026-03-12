@@ -243,24 +243,16 @@ function promptSeriesScope(
   const isEdit = action === 'edit';
   const title = isEdit ? 'Edit recurring event?' : 'Delete recurring event?';
   const description = isEdit
-    ? 'This is part of a repeating series. Which events do you want to change?'
-    : 'This is part of a repeating series. Which events do you want to delete?';
+    ? 'Choose which events to edit.'
+    : 'Choose which events to delete.';
   Alert.alert(
     title,
     description,
     [
+      { text: 'This event', onPress: () => onSelect('this') },
+      { text: 'This and following events', onPress: () => onSelect('following') },
+      { text: 'All events', onPress: () => onSelect('all') },
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Only this one', onPress: () => onSelect('this') },
-      {
-        text: 'More options',
-        onPress: () => {
-          Alert.alert(title, 'Pick a broader scope:', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'This and all future ones', onPress: () => onSelect('following') },
-            { text: 'Entire series', onPress: () => onSelect('all') },
-          ]);
-        },
-      },
     ]
   );
 }
@@ -517,7 +509,7 @@ export default function DayTimeline() {
   const [lastUsedCreateLane, setLastUsedCreateLane] = useState<Lane>('planned');
   const [laneVisibility, setLaneVisibility] = useState<Record<Lane, boolean>>({
     planned: true,
-    actual: false,
+    actual: true,
   });
   const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
     ? 'compare'
@@ -1639,7 +1631,14 @@ export default function DayTimeline() {
 
     if (existing.recurrenceId) {
       promptSeriesScope('delete', (scope) => {
-        Alert.alert('Delete block', 'Are you sure you want to delete this selection?', [
+        const confirmationMessage =
+          scope === 'all'
+            ? 'Delete all events in this series? This includes past and future events.'
+            : scope === 'following'
+              ? 'Delete this and following events?'
+              : 'Delete this event?';
+
+        Alert.alert('Delete recurring event', confirmationMessage, [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Delete',
@@ -1841,6 +1840,125 @@ export default function DayTimeline() {
         void (async () => {
           try {
             const linkedPlannedIdForSingle = editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined;
+            const shouldConvertSingleBlockToSeries =
+              !existing.recurrenceId && editorState.repeatPreset !== 'none';
+
+            if (shouldConvertSingleBlockToSeries) {
+              const recurringRule = buildRepeatRuleFromEditorState(editorState, dayKey);
+              if (recurringRule.endMode === 'onDate') {
+                const rawEndDayKey = editorState.repeatUntilDayKey.trim();
+                if (!dayKeyToLocalDate(rawEndDayKey)) {
+                  setEditorState((current) => ({
+                    ...current,
+                    errorText: 'Repeat until must be a valid date (YYYY-MM-DD).',
+                  }));
+                  return;
+                }
+                if (recurringRule.endDayKey < dayKey) {
+                  setEditorState((current) => ({
+                    ...current,
+                    errorText: 'Repeat until cannot be before this day.',
+                  }));
+                  return;
+                }
+              }
+
+              const repeatBuild = buildRepeatDayKeys(dayKey, recurringRule);
+              if (repeatBuild.dayKeys.length === 0) {
+                setEditorState((current) => ({
+                  ...current,
+                  errorText: 'No days match the selected repeat rule.',
+                }));
+                return;
+              }
+
+              const repeatDayIndexByKey = new Map(
+                repeatBuild.dayKeys.map((targetDayKey, index) => [targetDayKey, index + 1] as const)
+              );
+              const includesCurrentDay = repeatDayIndexByKey.has(dayKey);
+              const dayBlocksCache = new Map<string, TimeBlock[]>();
+              dayBlocksCache.set(dayKey, sortedBlocks);
+
+              for (const targetDayKey of repeatBuild.dayKeys) {
+                let dayBlocks = dayBlocksCache.get(targetDayKey);
+                if (!dayBlocks) {
+                  dayBlocks = await getBlocksForDay(targetDayKey);
+                  dayBlocksCache.set(targetDayKey, dayBlocks);
+                }
+
+                const otherBlocks =
+                  targetDayKey === dayKey
+                    ? dayBlocks.filter((block) => block.id !== existing.id)
+                    : dayBlocks;
+                if (hasOverlap(editorState.lane, null, startMin, endMin, otherBlocks)) {
+                  Alert.alert('Invalid time', `One or more events would overlap on ${targetDayKey}.`);
+                  return;
+                }
+              }
+
+              const nextRecurrenceId = createRecurrenceId();
+
+              if (includesCurrentDay) {
+                await updateBlock(
+                  {
+                    ...existing,
+                    lane: editorState.lane,
+                    title,
+                    tags: nextTags,
+                    startMin,
+                    endMin,
+                    linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                    recurrenceId: nextRecurrenceId,
+                    recurrenceIndex: repeatDayIndexByKey.get(dayKey) ?? 1,
+                    repeatRule: recurringRule,
+                  },
+                  dayKey
+                );
+              }
+
+              for (const targetDayKey of repeatBuild.dayKeys) {
+                if (targetDayKey === dayKey && includesCurrentDay) {
+                  continue;
+                }
+
+                await insertBlock(
+                  {
+                    lane: editorState.lane,
+                    title,
+                    tags: nextTags,
+                    startMin,
+                    endMin,
+                    linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                    recurrenceId: nextRecurrenceId,
+                    recurrenceIndex: repeatDayIndexByKey.get(targetDayKey) ?? null,
+                    repeatRule: recurringRule,
+                  },
+                  targetDayKey
+                );
+              }
+
+              if (!includesCurrentDay) {
+                await deleteBlock(existing.id);
+              }
+
+              const refreshedBlocks = await getBlocksForDay(dayKey);
+              setBlocks(sortByStartMin(refreshedBlocks));
+              setDragPreviewById((current) => {
+                if (!(existing.id in current)) {
+                  return current;
+                }
+
+                const next = { ...current };
+                delete next[existing.id];
+                return next;
+              });
+              void triggerSuccessHaptic();
+              closeEditor();
+              if (repeatBuild.truncated) {
+                showFeedback('Created a 1-year rolling series. Extend it later if needed.');
+              }
+              return;
+            }
 
             if (scope === 'this' || !existing.recurrenceId) {
               const updatedBlock: TimeBlock = {
@@ -2197,8 +2315,7 @@ export default function DayTimeline() {
     }
 
     const repeatOptionsActive =
-      editorState.repeatPreset !== 'none' &&
-      (editorState.mode === 'create' || (editorState.mode === 'edit' && editorState.isRecurringSource));
+      editorState.repeatPreset !== 'none';
 
     if (repeatOptionsActive) {
       const repeatRule = buildRepeatRuleFromEditorState(editorState, dayKey);
@@ -2989,7 +3106,7 @@ export default function DayTimeline() {
       <BlockEditorModal
         visible={editorState.visible}
         mode={editorState.mode}
-        showRepeatControls={editorState.mode === 'create' || editorState.isRecurringSource}
+        showRepeatControls
         lane={editorState.lane}
         titleValue={editorState.title}
         selectedTags={editorState.tags}
