@@ -50,6 +50,12 @@ const CATEGORY_COLORS = [
 ];
 const SHEET_VISIBLE_HEIGHT = '86%';
 const CALENDAR_WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DONE_TEXT_INPUT_PROPS = {
+  returnKeyType: 'done' as const,
+  enterKeyHint: 'done' as const,
+  inputAccessoryViewButtonLabel: 'Done',
+  submitBehavior: 'blurAndSubmit' as const,
+};
 
 type CalendarDayCell = {
   key: string;
@@ -526,6 +532,24 @@ function buildCalendarDayCells(monthStart: Date): CalendarDayCell[] {
   return cells;
 }
 
+function formatDayKeyLabel(dayKey: string): string {
+  const date = dayKeyToLocalDate(dayKey);
+  if (!date) {
+    return dayKey;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+function dismissKeyboardOnSubmit() {
+  Keyboard.dismiss();
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { dayKey: dayKeyParam } = useLocalSearchParams<{
@@ -534,7 +558,7 @@ export default function SettingsScreen() {
   const routeDayKeyRaw = Array.isArray(dayKeyParam) ? dayKeyParam[0] : dayKeyParam;
   const routeDayKey = routeDayKeyRaw && dayKeyToLocalDate(routeDayKeyRaw) ? routeDayKeyRaw : null;
   const timelineDayKey = routeDayKey ?? getLocalDayKey();
-  const { settings, updateSettings, resetCategoriesToDefault, resetAllData, signalDataChanged, dataVersion } =
+  const { settings, updateSettings, resetCategoriesToDefault, resetAllData, signalDataChanged } =
     useAppSettings();
   const [saving, setSaving] = useState(false);
   const [categoryName, setCategoryName] = useState('');
@@ -549,6 +573,12 @@ export default function SettingsScreen() {
   const [activeLegalDocKey, setActiveLegalDocKey] = useState<LegalDocumentKey | null>(null);
   const [importDataVisible, setImportDataVisible] = useState(false);
   const [importDataText, setImportDataText] = useState('');
+  const [exportAnotherDayVisible, setExportAnotherDayVisible] = useState(false);
+  const [exportSelectedDayKey, setExportSelectedDayKey] = useState(timelineDayKey);
+  const [exportCalendarMonthStart, setExportCalendarMonthStart] = useState(() => {
+    const initialExportDate = dayKeyToLocalDate(timelineDayKey) ?? new Date();
+    return getMonthStart(initialExportDate);
+  });
   const [copyPlanFromDayVisible, setCopyPlanFromDayVisible] = useState(false);
   const [copyPlanTargetDayKey, setCopyPlanTargetDayKey] = useState(timelineDayKey);
   const [copyPlanSourceDayKey, setCopyPlanSourceDayKey] = useState(() => shiftDayKey(timelineDayKey, -1));
@@ -557,49 +587,25 @@ export default function SettingsScreen() {
     const initialSourceDate = dayKeyToLocalDate(shiftDayKey(timelineDayKey, -1)) ?? new Date();
     return getMonthStart(initialSourceDate);
   });
-  const [timelineBlocks, setTimelineBlocks] = useState<TimeBlock[]>([]);
 
   const activeLegalDoc = LEGAL_DOCUMENTS.find((document) => document.key === activeLegalDocKey) ?? null;
-  const timelineDateLabel = useMemo(() => {
-    const date = dayKeyToLocalDate(timelineDayKey);
-    if (!date) {
-      return timelineDayKey;
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }).format(date);
-  }, [timelineDayKey]);
+  const timelineDateLabel = useMemo(() => formatDayKeyLabel(timelineDayKey), [timelineDayKey]);
+  const exportSelectedDateLabel = useMemo(() => formatDayKeyLabel(exportSelectedDayKey), [exportSelectedDayKey]);
   const todayDayKey = getLocalDayKey();
-  const copySourceDateLabel = useMemo(() => {
-    const sourceDate = dayKeyToLocalDate(copyPlanSourceDayKey);
-    if (!sourceDate) {
-      return copyPlanSourceDayKey;
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }).format(sourceDate);
-  }, [copyPlanSourceDayKey]);
-  const copyTargetDateLabel = useMemo(() => {
-    const targetDate = dayKeyToLocalDate(copyPlanTargetDayKey);
-    if (!targetDate) {
-      return copyPlanTargetDayKey;
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }).format(targetDate);
-  }, [copyPlanTargetDayKey]);
+  const copySourceDateLabel = useMemo(() => formatDayKeyLabel(copyPlanSourceDayKey), [copyPlanSourceDayKey]);
+  const copyTargetDateLabel = useMemo(() => formatDayKeyLabel(copyPlanTargetDayKey), [copyPlanTargetDayKey]);
+  const exportCalendarMonthLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+      }).format(exportCalendarMonthStart),
+    [exportCalendarMonthStart]
+  );
+  const exportCalendarCells = useMemo(
+    () => buildCalendarDayCells(exportCalendarMonthStart),
+    [exportCalendarMonthStart]
+  );
   const copyCalendarMonthLabel = useMemo(
     () =>
       new Intl.DateTimeFormat(undefined, {
@@ -654,20 +660,6 @@ export default function SettingsScreen() {
       }),
     [allCategoryColors, editingCategoryColor, editingCategoryColorSetExcludingCurrent]
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const blocks = await getBlocksForDay(timelineDayKey);
-      if (!cancelled) {
-        setTimelineBlocks(sortByStartMin(blocks));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dataVersion, timelineDayKey]);
 
   useEffect(() => {
     if (!copyPlanFromDayVisible) {
@@ -947,32 +939,66 @@ export default function SettingsScreen() {
     })();
   }, [settings]);
 
-  const exportTimelineDayData = useCallback(() => {
+  const shareDayBackup = useCallback(async (dayKey: string, blocks: TimeBlock[]) => {
+    const payload: DayBackupPayload = {
+      schema: DAY_BACKUP_SCHEMA,
+      exportedAt: new Date().toISOString(),
+      dayKey,
+      blocks: sortByStartMin(blocks),
+    };
+
+    await Share.share({
+      message: JSON.stringify(payload, null, 2),
+      title: `Plan vs Actual Day Backup (${dayKey})`,
+    });
+  }, []);
+
+  const exportThisDayData = useCallback(() => {
     void (async () => {
       setSaving(true);
       try {
-        const payload: DayBackupPayload = {
-          schema: DAY_BACKUP_SCHEMA,
-          exportedAt: new Date().toISOString(),
-          dayKey: timelineDayKey,
-          blocks: sortByStartMin(timelineBlocks),
-        };
-        await Share.share({
-          message: JSON.stringify(payload, null, 2),
-          title: `Plan vs Actual Day Backup (${timelineDayKey})`,
-        });
+        const blocks = await getBlocksForDay(timelineDayKey);
+        await shareDayBackup(timelineDayKey, blocks);
       } catch {
-        Alert.alert('Export error', "Could not export today's data.");
+        Alert.alert('Export error', `Could not export data for ${formatDayKeyLabel(timelineDayKey)}.`);
       } finally {
         setSaving(false);
       }
     })();
-  }, [timelineBlocks, timelineDayKey]);
+  }, [shareDayBackup, timelineDayKey]);
+
+  const openExportAnotherDay = useCallback(() => {
+    const initialExportDate = dayKeyToLocalDate(timelineDayKey) ?? new Date();
+    setExportSelectedDayKey(timelineDayKey);
+    setExportCalendarMonthStart(getMonthStart(initialExportDate));
+    setExportAnotherDayVisible(true);
+  }, [timelineDayKey]);
+
+  const exportAnotherDayData = useCallback(() => {
+    const selectedDayKey = exportSelectedDayKey.trim();
+    if (!dayKeyToLocalDate(selectedDayKey)) {
+      Alert.alert('Invalid date', 'Select a valid day to export.');
+      return;
+    }
+
+    void (async () => {
+      setSaving(true);
+      try {
+        const blocks = await getBlocksForDay(selectedDayKey);
+        await shareDayBackup(selectedDayKey, blocks);
+        setExportAnotherDayVisible(false);
+      } catch {
+        Alert.alert('Export error', `Could not export data for ${formatDayKeyLabel(selectedDayKey)}.`);
+      } finally {
+        setSaving(false);
+      }
+    })();
+  }, [exportSelectedDayKey, shareDayBackup]);
 
   const importData = useCallback(() => {
     const input = importDataText.trim();
     if (!input) {
-      Alert.alert('Nothing to import', `Paste backup JSON or text from "Export Today's data."`);
+      Alert.alert('Nothing to import', 'Paste backup JSON or text from "Export this day".');
       return;
     }
 
@@ -1063,7 +1089,7 @@ export default function SettingsScreen() {
     const parsedDayBackup = parseDayBackupInput(input);
     if (parsedDayBackup) {
       Alert.alert(
-        "Import today's backup",
+        "Import this day's backup",
         `Detected day backup JSON from ${parsedDayBackup.dayKey}. This imports into ${timelineDayKey}.`,
         [
           { text: 'Cancel', style: 'cancel' },
@@ -1187,19 +1213,19 @@ export default function SettingsScreen() {
                     created += 1;
                   }
 
-                  signalDataChanged();
-                  setImportDataVisible(false);
-                  setImportDataText('');
-                  Alert.alert(
-                    'Import complete',
-                    `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, unresolved links ${unresolvedLinks}.`
-                  );
-                } catch {
-                  Alert.alert('Import error', "Could not import today's backup.");
-                } finally {
-                  setSaving(false);
-                }
-              })();
+                signalDataChanged();
+                setImportDataVisible(false);
+                setImportDataText('');
+                Alert.alert(
+                  'Import complete',
+                  `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, unresolved links ${unresolvedLinks}.`
+                );
+              } catch {
+                Alert.alert('Import error', "Could not import this day's backup.");
+              } finally {
+                setSaving(false);
+              }
+            })();
             },
           },
         ]
@@ -1211,7 +1237,7 @@ export default function SettingsScreen() {
     if (parsedSummary.blocks.length === 0) {
       Alert.alert(
         'Unsupported import',
-        `Paste backup JSON from "Export all data" or "Export Today's data", or text from older "Export Today's data" summaries.`
+        'Paste backup JSON from "Export all data" or "Export this day", or text from older "Export Today\'s data" summaries.'
       );
       return;
     }
@@ -1298,7 +1324,7 @@ export default function SettingsScreen() {
           `Created ${created}, skipped duplicates ${skippedDuplicate}, skipped overlaps ${skippedOverlap}, invalid lines ${parsedSummary.invalidLines}.`
         );
       } catch {
-        Alert.alert('Import error', "Could not import Today's data.");
+        Alert.alert('Import error', "Could not import this day's data.");
       } finally {
         setSaving(false);
       }
@@ -1511,6 +1537,8 @@ export default function SettingsScreen() {
                 style={styles.categoryInput}
                 placeholder="New category name"
                 placeholderTextColor="#94A3B8"
+                {...DONE_TEXT_INPUT_PROPS}
+                onSubmitEditing={dismissKeyboardOnSubmit}
               />
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.colorRow}>
                 {addColorOptions.map((color) => {
@@ -1541,6 +1569,8 @@ export default function SettingsScreen() {
                     autoCapitalize="characters"
                     maxLength={7}
                     placeholderTextColor="#94A3B8"
+                    {...DONE_TEXT_INPUT_PROPS}
+                    onSubmitEditing={dismissKeyboardOnSubmit}
                   />
                   <Pressable style={styles.customColorApplyButton} onPress={applyAddCustomColor}>
                     <Text style={styles.customColorApplyButtonText}>Use</Text>
@@ -1558,36 +1588,47 @@ export default function SettingsScreen() {
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Actions</Text>
-            <Text style={styles.toggleHint}>For {timelineDateLabel}</Text>
-            <Text style={styles.toggleHint}>Switching phones? Export all data on one device, then import it on the other.</Text>
+            <Text style={styles.toggleHint}>Day actions use {timelineDateLabel}.</Text>
+            <Text style={styles.toggleHint}>Switching phones? Use Export all data, then Import data on the other device.</Text>
             <View style={styles.timelineActionList}>
               <Pressable
+                accessibilityLabel="Export this day's data"
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
+                disabled={saving}
+                onPress={exportThisDayData}>
+                <Text style={styles.timelineActionButtonText}>Export this day</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Export another day's data"
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
+                disabled={saving}
+                onPress={openExportAnotherDay}>
+                <Text style={styles.timelineActionButtonText}>Export another day</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Copy plan blocks from a past day"
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
+                disabled={saving}
+                onPress={openCopyPlanFromPastDay}>
+                <Text style={styles.timelineActionButtonText}>Copy plan from past day</Text>
+              </Pressable>
+              <Pressable
                 accessibilityLabel="Export all data"
-                style={styles.timelineActionButton}
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
+                disabled={saving}
                 onPress={exportAllData}>
                 <Text style={styles.timelineActionButtonText}>Export all data</Text>
               </Pressable>
               <Pressable
                 accessibilityLabel="Import data"
-                style={styles.timelineActionButton}
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
+                disabled={saving}
                 onPress={() => setImportDataVisible(true)}>
                 <Text style={styles.timelineActionButtonText}>Import data</Text>
               </Pressable>
               <Pressable
-                accessibilityLabel="Export today's data"
-                style={styles.timelineActionButton}
-                onPress={exportTimelineDayData}>
-                <Text style={styles.timelineActionButtonText}>Export Today&apos;s data</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Copy plan blocks from a past day"
-                style={styles.timelineActionButton}
-                onPress={openCopyPlanFromPastDay}>
-                <Text style={styles.timelineActionButtonText}>Copy Plan from Past Day</Text>
-              </Pressable>
-              <Pressable
                 accessibilityLabel="Reset categories to defaults"
-                style={styles.timelineActionButton}
+                style={[styles.timelineActionButton, saving && styles.timelineActionButtonDisabled]}
                 onPress={confirmResetCategoriesToDefault}
                 disabled={saving}>
                 <Text style={styles.timelineActionButtonText}>Reset categories to defaults</Text>
@@ -1655,6 +1696,8 @@ export default function SettingsScreen() {
                 style={styles.categoryInput}
                 placeholder="Category name"
                 placeholderTextColor="#94A3B8"
+                {...DONE_TEXT_INPUT_PROPS}
+                onSubmitEditing={dismissKeyboardOnSubmit}
               />
 
               <Text style={styles.sectionTitle}>Color</Text>
@@ -1687,6 +1730,8 @@ export default function SettingsScreen() {
                     autoCapitalize="characters"
                     maxLength={7}
                     placeholderTextColor="#94A3B8"
+                    {...DONE_TEXT_INPUT_PROPS}
+                    onSubmitEditing={dismissKeyboardOnSubmit}
                   />
                   <Pressable style={styles.customColorApplyButton} onPress={applyEditCustomColor}>
                     <Text style={styles.customColorApplyButtonText}>Use</Text>
@@ -1781,7 +1826,7 @@ export default function SettingsScreen() {
                   <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
                 </Pressable>
               </View>
-              <Text style={styles.toggleHint}>Paste backup JSON from Export all data, or text from Export Today&apos;s data.</Text>
+              <Text style={styles.toggleHint}>Paste backup JSON from Export all data, or text from Export this day.</Text>
               <Text style={styles.toggleHint}>Day backup JSON includes all blocks and relations.</Text>
               <TextInput
                 value={importDataText}
@@ -1791,6 +1836,8 @@ export default function SettingsScreen() {
                 style={styles.summaryImportInput}
                 placeholder="Paste import text here..."
                 placeholderTextColor="#94A3B8"
+                {...DONE_TEXT_INPUT_PROPS}
+                onSubmitEditing={dismissKeyboardOnSubmit}
               />
               <View style={styles.editorActions}>
                 <Pressable style={styles.editorDeleteButton} onPress={() => setImportDataVisible(false)}>
@@ -1801,6 +1848,101 @@ export default function SettingsScreen() {
                   disabled={saving}
                   onPress={importData}>
                   <Text style={styles.editorSaveButtonText}>Import</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={exportAnotherDayVisible}
+        onRequestClose={() => setExportAnotherDayVisible(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setExportAnotherDayVisible(false)} />
+          <View style={styles.keyboardLift}>
+            <View style={styles.sheetCard}>
+              <View style={styles.sheetGrabber} />
+              <View style={styles.sheetHeaderRow}>
+                <Text style={styles.sheetTitle}>Export Another Day</Text>
+                <Pressable
+                  accessibilityLabel="Close export another day dialog"
+                  style={styles.sheetCloseButton}
+                  onPress={() => setExportAnotherDayVisible(false)}>
+                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                </Pressable>
+              </View>
+              <Text style={[styles.toggleHint, styles.copyPlanHint]}>Pick a day to export.</Text>
+              <View style={styles.exportSelectedDayRow}>
+                <Text style={styles.copyPlanFieldLabel}>Selected day</Text>
+                <Text style={styles.exportSelectedDayValue}>{exportSelectedDateLabel}</Text>
+              </View>
+              <View style={styles.copyPlanCalendarCard}>
+                <View style={styles.copyPlanMonthRow}>
+                  <Pressable
+                    accessibilityLabel="Show previous month"
+                    style={styles.copyPlanMonthButton}
+                    onPress={() => setExportCalendarMonthStart((current) => shiftMonth(current, -1))}>
+                    <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+                  </Pressable>
+                  <Text style={styles.copyPlanMonthLabel}>{exportCalendarMonthLabel}</Text>
+                  <Pressable
+                    accessibilityLabel="Show next month"
+                    style={styles.copyPlanMonthButton}
+                    onPress={() => setExportCalendarMonthStart((current) => shiftMonth(current, 1))}>
+                    <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+                  </Pressable>
+                </View>
+                <View style={styles.copyPlanWeekdayRow}>
+                  {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
+                    <Text key={`export-day-${index}`} style={styles.copyPlanWeekdayText}>
+                      {label}
+                    </Text>
+                  ))}
+                </View>
+                <View style={styles.copyPlanGrid}>
+                  {exportCalendarCells.map((cell) => {
+                    const cellDayKey = cell.dayKey;
+                    const inCurrentMonth = cell.inCurrentMonth;
+                    const selectable = inCurrentMonth && !!cellDayKey;
+                    const selected = !!cellDayKey && cellDayKey === exportSelectedDayKey;
+                    const isToday = !!cellDayKey && cellDayKey === todayDayKey;
+
+                    return (
+                      <Pressable
+                        key={cell.key}
+                        accessibilityLabel={cellDayKey ? `Use ${cellDayKey} as export day` : 'Calendar day'}
+                        disabled={!selectable}
+                        onPress={() => {
+                          if (cellDayKey && selectable) {
+                            setExportSelectedDayKey(cellDayKey);
+                          }
+                        }}
+                        style={styles.copyPlanDayCell}>
+                        {isToday ? <View style={styles.copyPlanTodayCircle} /> : null}
+                        <View style={[styles.copyPlanDayNumber, selected && styles.copyPlanDayNumberSelected]}>
+                          <Text
+                            style={[
+                              styles.copyPlanDayText,
+                              !inCurrentMonth && styles.copyPlanDayTextOutsideMonth,
+                              !selectable && styles.copyPlanDayTextDisabled,
+                            ]}>
+                            {cell.date?.getDate() ?? ''}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              <View style={styles.editorActions}>
+                <Pressable style={styles.editorDeleteButton} onPress={() => setExportAnotherDayVisible(false)}>
+                  <Text style={styles.editorDeleteButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.editorSaveButton} disabled={saving} onPress={exportAnotherDayData}>
+                  <Text style={styles.editorSaveButtonText}>Export</Text>
                 </Pressable>
               </View>
             </View>
@@ -2145,6 +2287,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  timelineActionButtonDisabled: {
+    opacity: 0.55,
+  },
   timelineActionButtonText: {
     color: UI_COLORS.neutralText,
     fontSize: 13,
@@ -2255,6 +2400,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  exportSelectedDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  exportSelectedDayValue: {
+    color: UI_COLORS.neutralText,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   copyPlanMonthRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2311,6 +2466,11 @@ const styles = StyleSheet.create({
   copyPlanDayNumberTargetSelected: {
     borderWidth: 2,
     borderColor: '#2563EB',
+  },
+  copyPlanDayNumberSelected: {
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
   },
   copyPlanDayText: {
     color: UI_COLORS.neutralText,

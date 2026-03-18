@@ -105,6 +105,12 @@ const WEEKDAY_OPTIONS = [
   { value: 6, label: 'S' },
 ];
 const CALENDAR_WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DONE_TEXT_INPUT_PROPS = {
+  returnKeyType: 'done' as const,
+  enterKeyHint: 'done' as const,
+  inputAccessoryViewButtonLabel: 'Done',
+  submitBehavior: 'blurAndSubmit' as const,
+};
 
 type CalendarCell = {
   key: string;
@@ -172,6 +178,10 @@ function getStartAndDuration(startValue: string, endValue: string): { startMin: 
   }
 
   return { startMin: parsedStart, durationMin: parsedEnd - parsedStart };
+}
+
+function dismissKeyboardOnSubmit() {
+  Keyboard.dismiss();
 }
 
 export function BlockEditorModal({
@@ -413,6 +423,8 @@ export function BlockEditorModal({
               style={styles.input}
               accessibilityLabel="Block title"
               placeholderTextColor={UI_COLORS.neutralTextSoft}
+              {...DONE_TEXT_INPUT_PROPS}
+              onSubmitEditing={dismissKeyboardOnSubmit}
             />
 
             <View style={styles.timeControlRow}>
@@ -460,6 +472,8 @@ export function BlockEditorModal({
                             keyboardType="number-pad"
                             accessibilityLabel="Repeat interval"
                             placeholderTextColor={UI_COLORS.neutralTextSoft}
+                            {...DONE_TEXT_INPUT_PROPS}
+                            onSubmitEditing={dismissKeyboardOnSubmit}
                           />
                           <Text style={styles.repeatInlineLabel}>{repeatIntervalUnit}</Text>
                         </View>
@@ -557,6 +571,8 @@ export function BlockEditorModal({
                           keyboardType="number-pad"
                           accessibilityLabel="Repeat occurrence count"
                           placeholderTextColor={UI_COLORS.neutralTextSoft}
+                          {...DONE_TEXT_INPUT_PROPS}
+                          onSubmitEditing={dismissKeyboardOnSubmit}
                         />
                       </View>
                     ) : null}
