@@ -64,9 +64,7 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 ## 6) Privacy, legal, and policy compliance
 
 - [ ] Privacy policy URL is live and public.
-- [ ] Terms URL is live and public.
-- [ ] Support URL is live and public.
-- [ ] URLs match app and App Store Connect values exactly.
+- [ ] Privacy policy URL matches App Store Connect exactly.
 - [ ] Support inbox is monitored: `jacobchin.builds@gmail.com`.
 - [ ] App Privacy questionnaire completed in App Store Connect.
 - [ ] App Privacy answers match actual data practices in code and SDKs.
@@ -81,7 +79,6 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 - [ ] App name/subtitle finalized.
 - [ ] Description finalized (customer-facing, accurate, no roadmap promises).
 - [ ] Keywords finalized (no competitor names).
-- [ ] Support URL set.
 - [ ] Marketing URL set (optional but recommended).
 - [ ] Copyright field set.
 - [ ] Category and subcategory selected correctly.
@@ -123,15 +120,12 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 - [ ] Monitor App Review messages multiple times daily.
 - [ ] Respond quickly with concrete reproduction steps if questioned.
 - [ ] If rejected, document root cause and required fix before resubmitting.
-- [ ] Keep legal/support pages online and unchanged during review window.
+- [ ] Keep the public privacy policy page online and unchanged during review window.
 
 ## 12) Repo-specific values to verify each release
 
 - [ ] `app.json` version and iOS bundle identifier are correct.
-- [ ] `src/constants/releaseMetadata.ts` URLs are production-ready:
-  - [ ] `https://timemaxx.app/privacy-policy`
-  - [ ] `https://timemaxx.app/terms-of-service`
-  - [ ] `https://timemaxx.app/support`
+- [ ] `src/constants/releaseMetadata.ts` support email is production-ready.
 - [ ] Existing docs are current:
   - [ ] `docs/app-store/submission-checklist.md`
   - [ ] `docs/app-store/review-notes-template.md`

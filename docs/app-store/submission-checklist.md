@@ -13,14 +13,15 @@ Last updated: March 18, 2026
 - COMPLETE: Real states exist (empty day, error alerts, loading around save actions).
 - COMPLETE: Main interactive buttons have handlers.
 
-## 2) Legal pages (public URLs)
+## 2) Legal pages and support
 - COMPLETE: Privacy Policy exists in [legal/privacy-policy.md](../../legal/privacy-policy.md).
 - COMPLETE: Terms of Service exists in [legal/terms-of-service.md](../../legal/terms-of-service.md).
 - COMPLETE: Legal pages are linked in-app via Settings -> Legal & Support.
-- MANUAL: Add Privacy Policy public URL in App Store Connect.
 - COMPLETE: Support page exists in [legal/support.md](../../legal/support.md).
 - COMPLETE: Support email is configured to `jacobchin.builds@gmail.com` in app and legal docs.
 - COMPLETE: Privacy policy describes data collection, storage, and deletion.
+- MANUAL: Host a public Privacy Policy URL and add it in App Store Connect.
+- N/A: Public Terms URL is not currently configured in this repo.
 
 ## 3) Business setup
 - MANUAL: Small Business Program enrollment.
@@ -80,13 +81,13 @@ Last updated: March 18, 2026
 
 ## 14) Final submit pass
 - MANUAL: Validate listing copy/screenshots match the exact build submitted.
-- MANUAL: Validate all public listing URLs are live and non-404.
+- MANUAL: Validate the public Privacy Policy URL is live and non-404.
 - COMPLETE: No placeholder text or fake flows detected in-app.
 - COMPLETE: Core use-case can be completed quickly.
 - MANUAL: Set up rapid response process for App Review messages.
 
 ## Remaining actions requiring your input
-1. Verify public legal URLs resolve without 404 and are submitted in App Store Connect.
+1. Host a public Privacy Policy URL, then submit that exact URL in App Store Connect.
 2. Verify support inbox monitoring process is active for App Review and production.
 3. Complete App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
 4. Produce and upload final App Store listing copy + screenshots.

@@ -8,7 +8,7 @@ Use this in App Store Connect -> App Review Information -> Notes.
 ## 3-step reviewer flow
 1. Open the app and add a Plan block from the timeline.
 2. Tap the Plan block checkbox to auto-create and link a Done block.
-3. Open Settings to verify Legal & Support links and Reset all data.
+3. Open Settings to verify Legal & Support information and Reset all data.
 
 ## Hardware / location requirements
 - None.

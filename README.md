@@ -30,5 +30,5 @@ npm run release:check
 
 ## Required Manual Steps Before Submission
 1. Verify the configured support inbox (`jacobchin.builds@gmail.com`) is monitored.
-2. Verify legal/support public URLs are live and add them to App Store Connect.
+2. Host a public privacy policy URL for App Store Connect.
 3. Complete App Store Connect business, privacy, and listing configuration.
