@@ -137,6 +137,7 @@ const PINCH_FOCAL_MAX_STEP = 6;
 const FEEDBACK_DURATION_MS = 1500;
 const CREATE_THRESHOLD_PX = 16;
 const CREATE_DELAY_MS = 260;
+const CREATE_GESTURE_VERTICAL_BIAS_PX = 6;
 const TAP_CREATE_MIN_HOLD_MS = 500;
 const TAP_CREATE_DURATION_MIN = 60;
 const SCROLL_LIKE_VELOCITY_Y = 900;
@@ -817,6 +818,11 @@ export default function DayTimeline() {
       absoluteY - timelineViewportTopRef.current + timelineScrollOffsetYRef.current;
     return minuteFromGestureY(relativeY, pixelsPerMinute);
   }, [pixelsPerMinute]);
+
+  const minuteFromCreateAbsoluteY = useCallback((absoluteY: number): number | null => {
+    // Bias create gestures slightly upward so the snapped block start feels closer to the finger pad.
+    return minuteFromAbsoluteY(absoluteY - CREATE_GESTURE_VERTICAL_BIAS_PX);
+  }, [minuteFromAbsoluteY]);
 
   const applyTimelineZoom = useCallback(
     (
@@ -2392,7 +2398,7 @@ export default function DayTimeline() {
         return;
       }
 
-      const minute = minuteFromAbsoluteY(absoluteY);
+      const minute = minuteFromCreateAbsoluteY(absoluteY);
 
       if (minute === null) {
         createGestureBlockedRef.current = true;
@@ -2417,7 +2423,7 @@ export default function DayTimeline() {
         startedAtMs: Date.now(),
       };
     },
-    [activeDragId, minuteFromAbsoluteY, sortedBlocks]
+    [activeDragId, minuteFromCreateAbsoluteY, sortedBlocks]
   );
 
   const updateDraftCreation = useCallback(
@@ -2426,7 +2432,7 @@ export default function DayTimeline() {
         return;
       }
 
-      const minute = minuteFromAbsoluteY(absoluteY);
+      const minute = minuteFromCreateAbsoluteY(absoluteY);
 
       if (minute === null) {
         return;
@@ -2468,11 +2474,11 @@ export default function DayTimeline() {
           invalid,
         };
 
-      draftCreateRef.current = initialDraft;
-      createHapticKeyRef.current = `${initialDraft.startMin}-${initialDraft.endMin}`;
-      void triggerSelectionHaptic();
-      setDraftCreate(initialDraft);
-      setIsCreatingDraft(true);
+        draftCreateRef.current = initialDraft;
+        createHapticKeyRef.current = `${initialDraft.startMin}-${initialDraft.endMin}`;
+        void triggerSelectionHaptic();
+        setDraftCreate(initialDraft);
+        setIsCreatingDraft(true);
         return;
       }
 
@@ -2496,7 +2502,7 @@ export default function DayTimeline() {
         void triggerSelectionHaptic();
       }
     },
-    [minuteFromAbsoluteY, sortedBlocks]
+    [minuteFromCreateAbsoluteY, sortedBlocks]
   );
 
   const finalizeDraftCreation = useCallback(() => {

@@ -6,7 +6,6 @@ export type AppSettings = {
   plannedScanStartMin: number;
   actualScanStartMin: number;
   dimInsteadOfHide: boolean;
-  debugMode: boolean;
   categories: { id: string; label: string; color: string }[];
   visibleCategoryIds: string[];
 };
@@ -39,7 +38,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   plannedScanStartMin: 9 * 60,
   actualScanStartMin: 12 * 60,
   dimInsteadOfHide: false,
-  debugMode: false,
   categories: DEFAULT_CATEGORIES,
   visibleCategoryIds: DEFAULT_CATEGORIES.map((category) => category.id),
 };
@@ -48,7 +46,6 @@ const META_KEYS = {
   plannedScanStartMin: 'settings_planned_scan_start_min',
   actualScanStartMin: 'settings_actual_scan_start_min',
   dimInsteadOfHide: 'settings_dim_instead_of_hide',
-  debugMode: 'settings_debug_mode',
   categories: 'settings_categories',
   visibleCategoryIds: 'settings_visible_category_ids',
 } as const;
@@ -179,11 +176,10 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [dataVersion, setDataVersion] = useState(0);
 
   const refreshSettings = useCallback(async () => {
-    const [plannedRaw, actualRaw, dimRaw, debugRaw, categoriesRaw, visibleCategoryIdsRaw] = await Promise.all([
+    const [plannedRaw, actualRaw, dimRaw, categoriesRaw, visibleCategoryIdsRaw] = await Promise.all([
       getMetaValue(META_KEYS.plannedScanStartMin),
       getMetaValue(META_KEYS.actualScanStartMin),
       getMetaValue(META_KEYS.dimInsteadOfHide),
-      getMetaValue(META_KEYS.debugMode),
       getMetaValue(META_KEYS.categories),
       getMetaValue(META_KEYS.visibleCategoryIds),
     ]);
@@ -193,7 +189,6 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       plannedScanStartMin: parseMinuteSetting(plannedRaw, DEFAULT_SETTINGS.plannedScanStartMin),
       actualScanStartMin: parseMinuteSetting(actualRaw, DEFAULT_SETTINGS.actualScanStartMin),
       dimInsteadOfHide: parseBooleanSetting(dimRaw, DEFAULT_SETTINGS.dimInsteadOfHide),
-      debugMode: parseBooleanSetting(debugRaw, DEFAULT_SETTINGS.debugMode),
       categories,
       visibleCategoryIds: parseVisibleCategoryIdsSetting(
         visibleCategoryIdsRaw,
@@ -231,7 +226,6 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
         setMetaValue(META_KEYS.plannedScanStartMin, String(nextSettings.plannedScanStartMin)),
         setMetaValue(META_KEYS.actualScanStartMin, String(nextSettings.actualScanStartMin)),
         setMetaValue(META_KEYS.dimInsteadOfHide, nextSettings.dimInsteadOfHide ? '1' : '0'),
-        setMetaValue(META_KEYS.debugMode, nextSettings.debugMode ? '1' : '0'),
         setMetaValue(META_KEYS.categories, JSON.stringify(nextSettings.categories)),
         setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(nextSettings.visibleCategoryIds)),
       ]);

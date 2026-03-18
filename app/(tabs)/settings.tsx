@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   Share,
-  Switch,
   StyleSheet,
   Text,
   TextInput,
@@ -19,7 +18,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { useAppSettings, type AppSettings } from '@/src/context/AppSettingsContext';
-import { seedLastNDays } from '@/src/dev/seedData';
 import { clearAllBlocks, getAllBlocksByDay, getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
 import type { Block as TimeBlock, BlockRepeatRule, Lane } from '@/src/types/blocks';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
@@ -193,7 +191,6 @@ function parseImportedSettings(raw: unknown, fallback: AppSettings): AppSettings
     plannedScanStartMin: parseRoundedMinute(raw.plannedScanStartMin, fallback.plannedScanStartMin),
     actualScanStartMin: parseRoundedMinute(raw.actualScanStartMin, fallback.actualScanStartMin),
     dimInsteadOfHide: parseBoolean(raw.dimInsteadOfHide, fallback.dimInsteadOfHide),
-    debugMode: parseBoolean(raw.debugMode, fallback.debugMode),
     categories,
     visibleCategoryIds: visibleCategoryIds.length > 0 ? visibleCategoryIds : categories.map((category) => category.id),
   };
@@ -926,45 +923,6 @@ export default function SettingsScreen() {
     );
   };
 
-  const toggleDebugMode = async (enabled: boolean) => {
-    setSaving(true);
-    try {
-      await updateSettings({ debugMode: enabled });
-    } catch {
-      Alert.alert('Settings error', 'Could not update debug mode.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const confirmSeedData = (days: number) => {
-    Alert.alert(
-      'Generate sample data',
-      `This clears all current blocks and generates sample plan/done data for the last ${days} days, including today.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Generate',
-          onPress: () => {
-            void (async () => {
-              setSaving(true);
-              try {
-                await resetAllData();
-                await seedLastNDays(days);
-                signalDataChanged();
-                Alert.alert('Sample data ready', `Generated sample data for ${days} days.`);
-              } catch {
-                Alert.alert('Storage error', 'Could not generate sample data.');
-              } finally {
-                setSaving(false);
-              }
-            })();
-          },
-        },
-      ]
-    );
-  };
-
   const exportAllData = useCallback(() => {
     void (async () => {
       setSaving(true);
@@ -1638,42 +1596,6 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.section}>
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleCopy}>
-                <Text style={styles.sectionTitle}>Debug mode</Text>
-                <Text style={styles.toggleHint}>Show testing tools and data utilities.</Text>
-              </View>
-              <Switch
-                accessibilityLabel="Toggle debug mode"
-                value={settings.debugMode}
-                onValueChange={(value) => void toggleDebugMode(value)}
-                disabled={saving}
-                trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                thumbColor={settings.debugMode ? '#1D4ED8' : '#F8FAFC'}
-              />
-            </View>
-
-            {settings.debugMode ? (
-              <View style={styles.debugActions}>
-                <Pressable
-                  accessibilityLabel="Populate calendar with sample data for 7 days"
-                  style={styles.debugButton}
-                  onPress={() => confirmSeedData(7)}
-                  disabled={saving}>
-                  <Text style={styles.debugButtonText}>Populate 7 days of dense sample data</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityLabel="Populate calendar with sample data for 30 days"
-                  style={styles.debugButton}
-                  onPress={() => confirmSeedData(30)}
-                  disabled={saving}>
-                  <Text style={styles.debugButtonText}>Populate 30 days of dense sample data</Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.section}>
             <Text style={styles.sectionTitle}>Legal & Support</Text>
             <Text style={styles.toggleHint}>Required links for App Store review.</Text>
             <View style={styles.listGroup}>
@@ -2205,38 +2127,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: UI_COLORS.neutralText,
   },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  toggleCopy: {
-    flex: 1,
-    gap: 2,
-  },
   toggleHint: {
     color: UI_COLORS.neutralTextSoft,
     fontSize: 12,
     fontWeight: '500',
-  },
-  debugActions: {
-    marginTop: 2,
-    gap: 8,
-  },
-  debugButton: {
-    borderWidth: 1,
-    borderColor: '#1D4ED8',
-    borderRadius: UI_RADIUS.control,
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  debugButtonText: {
-    color: '#1E3A8A',
-    fontSize: 13,
-    fontWeight: '700',
   },
   timelineActionList: {
     gap: 8,
