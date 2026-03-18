@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
+import { APP_WEBSITE_URL, LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
 import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
 import { useAppSettings, type AppSettings } from '@/src/context/AppSettingsContext';
 import { clearAllBlocks, getAllBlocksByDay, getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
@@ -1482,6 +1482,22 @@ export default function SettingsScreen() {
     })();
   };
 
+  const openPublicPage = (url: string, title: string) => {
+    void (async () => {
+      try {
+        const supported = await Linking.canOpenURL(url);
+        if (!supported) {
+          Alert.alert('Link unavailable', `Could not open ${title}.`);
+          return;
+        }
+
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert('Link unavailable', `Could not open ${title}.`);
+      }
+    })();
+  };
+
   return (
     <View style={styles.modalRoot}>
       <Pressable accessibilityLabel="Close settings" style={styles.backdrop} onPress={() => router.back()} />
@@ -1638,8 +1654,18 @@ export default function SettingsScreen() {
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Legal & Support</Text>
-            <Text style={styles.toggleHint}>Required links for App Store review.</Text>
+            <Text style={styles.toggleHint}>View policies and support info.</Text>
             <View style={styles.listGroup}>
+              <Pressable
+                accessibilityLabel="Open TimeMaxx website"
+                style={[styles.listRow, styles.legalRow]}
+                onPress={() => openPublicPage(APP_WEBSITE_URL, 'TimeMaxx website')}>
+                <View style={styles.legalRowCopy}>
+                  <Text style={styles.categoryName}>TimeMaxx Website</Text>
+                  <Text style={styles.legalSummary}>Overview, support, and policy pages.</Text>
+                </View>
+                <Ionicons name="open-outline" size={16} color={UI_COLORS.neutralTextSoft} />
+              </Pressable>
               {LEGAL_DOCUMENTS.map((document) => (
                 <Pressable
                   key={document.key}
@@ -1783,6 +1809,13 @@ export default function SettingsScreen() {
                 ))}
               </ScrollView>
               <View style={styles.editorActions}>
+                {activeLegalDoc?.publicUrl ? (
+                  <Pressable
+                    style={styles.editorSecondaryButton}
+                    onPress={() => openPublicPage(activeLegalDoc.publicUrl, activeLegalDoc.title)}>
+                    <Text style={styles.editorSecondaryButtonText}>Open page</Text>
+                  </Pressable>
+                ) : null}
                 {activeLegalDoc?.key === 'support' ? (
                   <Pressable style={styles.editorSecondaryButton} onPress={openSupportEmail}>
                     <Text style={styles.editorSecondaryButtonText}>Email support</Text>

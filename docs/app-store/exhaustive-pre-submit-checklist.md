@@ -126,6 +126,7 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 
 - [ ] `app.json` version and iOS bundle identifier are correct.
 - [ ] `src/constants/releaseMetadata.ts` support email is production-ready.
+- [ ] `src/constants/releaseMetadata.ts` public URLs are production-ready.
 - [ ] Existing docs are current:
   - [ ] `docs/app-store/submission-checklist.md`
   - [ ] `docs/app-store/review-notes-template.md`

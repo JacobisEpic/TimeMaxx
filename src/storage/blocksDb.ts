@@ -1,7 +1,14 @@
 import * as SQLite from 'expo-sqlite';
 
 import type { Block, BlockRepeatPreset, Lane } from '@/src/types/blocks';
+import { getLocalDayKey } from '@/src/utils/dayKey';
 import { normalizeRepeatRule } from '@/src/utils/recurrence';
+
+import {
+  buildFirstLaunchSampleBlocks,
+  createFirstLaunchSeedState,
+  FIRST_LAUNCH_SEED_META_KEY,
+} from './firstLaunchSeed';
 
 const DB_NAME = 'timemaxx.db';
 // Preserve existing user data after the app rename.
@@ -81,6 +88,12 @@ type BlockRow = {
 
 type StoredBlockRow = BlockRow & {
   updatedAt: number;
+};
+
+type BlockInsertInput = Omit<Block, 'id'> & { id?: string };
+
+type MetaRow = {
+  value: string;
 };
 
 function parseRepeatPreset(value: unknown): BlockRepeatPreset {
@@ -217,6 +230,103 @@ async function getBlockCount(db: SQLite.SQLiteDatabase): Promise<number> {
   return Number(rows[0]?.count ?? 0);
 }
 
+async function getMetaValueFromDb(db: SQLite.SQLiteDatabase, key: string): Promise<string | null> {
+  const rows = await db.getAllAsync<MetaRow>(
+    'SELECT value FROM meta WHERE key = ? LIMIT 1;',
+    key
+  );
+  return rows[0]?.value ?? null;
+}
+
+async function setMetaValueInDb(db: SQLite.SQLiteDatabase, key: string, value: string): Promise<void> {
+  await db.runAsync('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);', key, value);
+}
+
+async function deleteMetaValueFromDb(db: SQLite.SQLiteDatabase, key: string): Promise<void> {
+  await db.runAsync('DELETE FROM meta WHERE key = ?;', key);
+}
+
+function mapInsertedBlock(input: BlockInsertInput, id: string): Block {
+  return {
+    id,
+    lane: input.lane,
+    startMin: input.startMin,
+    endMin: input.endMin,
+    title: input.title,
+    tags: [...input.tags],
+    linkedPlannedId: input.lane === 'done' ? input.linkedPlannedId ?? null : undefined,
+    recurrenceId: input.recurrenceId ?? null,
+    recurrenceIndex: input.recurrenceIndex ?? null,
+    repeatRule: input.repeatRule ?? null,
+  };
+}
+
+async function insertBlockRecord(
+  db: SQLite.SQLiteDatabase,
+  input: BlockInsertInput,
+  dayKey: string,
+  now: number = Date.now()
+): Promise<Block> {
+  const id = input.id ?? generateUuidV4();
+
+  await db.runAsync(
+    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    id,
+    dayKey,
+    input.lane,
+    input.startMin,
+    input.endMin,
+    input.title,
+    JSON.stringify(input.tags),
+    input.lane === 'done' ? input.linkedPlannedId ?? null : null,
+    input.recurrenceId ?? null,
+    input.recurrenceIndex ?? null,
+    input.repeatRule ? JSON.stringify(input.repeatRule) : null,
+    now
+  );
+
+  return mapInsertedBlock(input, id);
+}
+
+async function ensureFirstLaunchSeedHandled(db: SQLite.SQLiteDatabase): Promise<void> {
+  const seedState = await getMetaValueFromDb(db, FIRST_LAUNCH_SEED_META_KEY);
+  if (seedState !== null) {
+    return;
+  }
+
+  const blockCount = await getBlockCount(db);
+  if (blockCount > 0) {
+    await setMetaValueInDb(
+      db,
+      FIRST_LAUNCH_SEED_META_KEY,
+      createFirstLaunchSeedState('existing_data', null)
+    );
+    return;
+  }
+
+  const todayDayKey = getLocalDayKey();
+  const sampleBlocks = buildFirstLaunchSampleBlocks();
+  const now = Date.now();
+
+  await db.execAsync('BEGIN IMMEDIATE TRANSACTION;');
+  try {
+    for (const block of sampleBlocks) {
+      await insertBlockRecord(db, block, todayDayKey, now);
+    }
+
+    await setMetaValueInDb(
+      db,
+      FIRST_LAUNCH_SEED_META_KEY,
+      createFirstLaunchSeedState('seeded_sample', todayDayKey)
+    );
+    await db.execAsync('COMMIT;');
+  } catch (error) {
+    await db.execAsync('ROLLBACK;');
+    throw error;
+  }
+}
+
 async function migrateLegacyDatabaseIfNeeded(db: SQLite.SQLiteDatabase): Promise<void> {
   const currentBlockCount = await getBlockCount(db);
   if (currentBlockCount > 0) {
@@ -296,12 +406,9 @@ export async function initDb(): Promise<void> {
     await ensureSchema(db);
     await migrateLegacyDatabaseIfNeeded(db);
     await migrateStoredDoneLaneIfNeeded(db);
+    await ensureFirstLaunchSeedHandled(db);
 
-    await db.runAsync(
-      'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);',
-      'schema_version',
-      SCHEMA_VERSION
-    );
+    await setMetaValueInDb(db, 'schema_version', SCHEMA_VERSION);
   })();
 
   await initPromise;
@@ -416,43 +523,12 @@ export async function getBlocksForRecurrence(recurrenceId: string): Promise<Bloc
 }
 
 export async function insertBlock(
-  input: Omit<Block, 'id'> & { id?: string },
+  input: BlockInsertInput,
   dayKey: string
 ): Promise<Block> {
   await initDb();
   const db = await getDb();
-  const id = input.id ?? generateUuidV4();
-  const now = Date.now();
-
-  await db.runAsync(
-    `INSERT INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-    id,
-    dayKey,
-    input.lane,
-    input.startMin,
-    input.endMin,
-    input.title,
-    JSON.stringify(input.tags),
-    input.lane === 'done' ? input.linkedPlannedId ?? null : null,
-    input.recurrenceId ?? null,
-    input.recurrenceIndex ?? null,
-    input.repeatRule ? JSON.stringify(input.repeatRule) : null,
-    now
-  );
-
-  return {
-    id,
-    lane: input.lane,
-    startMin: input.startMin,
-    endMin: input.endMin,
-    title: input.title,
-    tags: input.tags,
-    linkedPlannedId: input.lane === 'done' ? input.linkedPlannedId ?? null : undefined,
-    recurrenceId: input.recurrenceId ?? null,
-    recurrenceIndex: input.recurrenceIndex ?? null,
-    repeatRule: input.repeatRule ?? null,
-  };
+  return insertBlockRecord(db, input, dayKey);
 }
 
 export async function updateBlock(block: Block, dayKey: string): Promise<void> {
@@ -491,22 +567,20 @@ export async function clearAllBlocks(): Promise<void> {
   await db.runAsync('DELETE FROM blocks;');
 }
 
-type MetaRow = {
-  value: string;
-};
-
 export async function getMetaValue(key: string): Promise<string | null> {
   await initDb();
   const db = await getDb();
-  const rows = await db.getAllAsync<MetaRow>(
-    'SELECT value FROM meta WHERE key = ? LIMIT 1;',
-    key
-  );
-  return rows[0]?.value ?? null;
+  return getMetaValueFromDb(db, key);
 }
 
 export async function setMetaValue(key: string, value: string): Promise<void> {
   await initDb();
   const db = await getDb();
-  await db.runAsync('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);', key, value);
+  await setMetaValueInDb(db, key, value);
+}
+
+export async function clearFirstLaunchSeedState(): Promise<void> {
+  await initDb();
+  const db = await getDb();
+  await deleteMetaValueFromDb(db, FIRST_LAUNCH_SEED_META_KEY);
 }

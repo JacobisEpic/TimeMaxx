@@ -12,7 +12,9 @@ TimeMaxx does not require user accounts and does not operate a backend service f
 
 ## Information We Collect
 
-TimeMaxx does **not collect, store, or transmit personal data or timeline data to external servers**.
+TimeMaxx does **not collect, store, or share any personal data**.
+
+All data remains on-device unless explicitly exported by the user.
 
 We do not:
 

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { clearAllBlocks, getMetaValue, setMetaValue } from '@/src/storage/blocksDb';
+import { clearAllBlocks, clearFirstLaunchSeedState, getMetaValue, setMetaValue } from '@/src/storage/blocksDb';
 
 export type AppSettings = {
   plannedScanStartMin: number;
@@ -245,6 +245,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const resetAllData = useCallback(async () => {
     await Promise.all([
       clearAllBlocks(),
+      clearFirstLaunchSeedState(),
       setMetaValue(META_KEYS.categories, JSON.stringify(DEFAULT_CATEGORIES)),
       setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(DEFAULT_SETTINGS.visibleCategoryIds)),
     ]);

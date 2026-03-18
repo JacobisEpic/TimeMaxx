@@ -20,8 +20,8 @@ Last updated: March 18, 2026
 - COMPLETE: Support page exists in [legal/support.md](../../legal/support.md).
 - COMPLETE: Support email is configured to `jacobchin.builds@gmail.com` in app and legal docs.
 - COMPLETE: Privacy policy describes data collection, storage, and deletion.
-- MANUAL: Host a public Privacy Policy URL and add it in App Store Connect.
-- N/A: Public Terms URL is not currently configured in this repo.
+- COMPLETE: Public overview, support, privacy, and terms URLs are configured in `src/constants/releaseMetadata.ts`.
+- MANUAL: Verify the public Privacy Policy URL is live and add it in App Store Connect.
 
 ## 3) Business setup
 - MANUAL: Small Business Program enrollment.
@@ -87,7 +87,7 @@ Last updated: March 18, 2026
 - MANUAL: Set up rapid response process for App Review messages.
 
 ## Remaining actions requiring your input
-1. Host a public Privacy Policy URL, then submit that exact URL in App Store Connect.
+1. Verify the public Privacy Policy URL is live, then submit that exact URL in App Store Connect.
 2. Verify support inbox monitoring process is active for App Review and production.
 3. Complete App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
 4. Produce and upload final App Store listing copy + screenshots.
