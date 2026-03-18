@@ -1482,30 +1482,6 @@ export default function SettingsScreen() {
     })();
   };
 
-  const openPublicUrl = (url: string | null) => {
-    if (!url) {
-      Alert.alert(
-        'Public URL not configured',
-        'Set a public URL for this document before App Store submission.'
-      );
-      return;
-    }
-
-    void (async () => {
-      try {
-        const supported = await Linking.canOpenURL(url);
-        if (!supported) {
-          Alert.alert('Cannot open link', 'Please verify the URL configuration.');
-          return;
-        }
-
-        await Linking.openURL(url);
-      } catch {
-        Alert.alert('Cannot open link', 'Please verify the URL configuration.');
-      }
-    })();
-  };
-
   return (
     <View style={styles.modalRoot}>
       <Pressable accessibilityLabel="Close settings" style={styles.backdrop} onPress={() => router.back()} />
@@ -1812,24 +1788,6 @@ export default function SettingsScreen() {
                     <Text style={styles.editorSecondaryButtonText}>Email support</Text>
                   </Pressable>
                 ) : null}
-                {activeLegalDoc?.publicUrl ? (
-                  <Pressable
-                    style={activeLegalDoc?.key === 'support' ? styles.editorSecondaryButton : styles.editorSaveButton}
-                    onPress={() => openPublicUrl(activeLegalDoc.publicUrl)}>
-                    <Text
-                      style={
-                        activeLegalDoc?.key === 'support'
-                          ? styles.editorSecondaryButtonText
-                          : styles.editorSaveButtonText
-                      }>
-                      Open public URL
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <View style={styles.legalPublicUrlHint}>
-                    <Text style={styles.legalSummary}>Public URL not configured yet.</Text>
-                  </View>
-                )}
               </View>
             </View>
           </View>
