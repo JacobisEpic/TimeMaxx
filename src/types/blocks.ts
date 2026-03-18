@@ -1,4 +1,4 @@
-export type Lane = 'planned' | 'actual';
+export type Lane = 'planned' | 'done';
 export type BlockRepeatPreset = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly';
 export type BlockRepeatEndMode = 'never' | 'onDate' | 'afterCount';
 export type BlockMonthlyRepeatMode = 'dayOfMonth' | 'ordinalWeekday';

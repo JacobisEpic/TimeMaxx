@@ -125,6 +125,18 @@ function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === 'object' && input !== null;
 }
 
+function parseImportedLane(value: unknown): Lane | null {
+  if (value === 'planned' || value === 'done') {
+    return value;
+  }
+
+  if (value === 'actual') {
+    return 'done';
+  }
+
+  return null;
+}
+
 function parseRoundedMinute(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -198,7 +210,10 @@ function parseImportedSettings(raw: unknown, fallback: AppSettings): AppSettings
 
   return {
     plannedScanStartMin: parseRoundedMinute(raw.plannedScanStartMin, fallback.plannedScanStartMin),
-    actualScanStartMin: parseRoundedMinute(raw.actualScanStartMin, fallback.actualScanStartMin),
+    doneScanStartMin: parseRoundedMinute(
+      raw.doneScanStartMin ?? raw.actualScanStartMin,
+      fallback.doneScanStartMin
+    ),
     dimInsteadOfHide: parseBoolean(raw.dimInsteadOfHide, fallback.dimInsteadOfHide),
     categories,
     visibleCategoryIds: visibleCategoryIds.length > 0 ? visibleCategoryIds : categories.map((category) => category.id),
@@ -242,7 +257,7 @@ function parseImportedBackupBlock(raw: unknown, fallbackId: string, dayKey: stri
     return null;
   }
 
-  const lane = raw.lane === 'planned' || raw.lane === 'actual' ? raw.lane : null;
+  const lane = parseImportedLane(raw.lane);
   if (!lane) {
     return null;
   }
@@ -264,7 +279,7 @@ function parseImportedBackupBlock(raw: unknown, fallbackId: string, dayKey: stri
     ? raw.tags.map((item) => String(item ?? '').trim()).filter((tag) => tag.length > 0)
     : [];
   const linkedPlannedId =
-    lane === 'actual' && typeof raw.linkedPlannedId === 'string' && raw.linkedPlannedId.trim().length > 0
+    lane === 'done' && typeof raw.linkedPlannedId === 'string' && raw.linkedPlannedId.trim().length > 0
       ? raw.linkedPlannedId.trim()
       : null;
   const recurrenceId =
@@ -284,7 +299,7 @@ function parseImportedBackupBlock(raw: unknown, fallbackId: string, dayKey: stri
     tags,
     startMin,
     endMin,
-    linkedPlannedId: lane === 'actual' ? linkedPlannedId : undefined,
+    linkedPlannedId: lane === 'done' ? linkedPlannedId : undefined,
     recurrenceId,
     recurrenceIndex,
     repeatRule,
@@ -467,7 +482,7 @@ function parseSummaryInput(input: string): { blocks: ParsedSummaryBlock[]; inval
       continue;
     }
     if (line === 'Done blocks:') {
-      section = 'actual';
+      section = 'done';
       continue;
     }
     if (section === null || line === 'none') {
@@ -1056,12 +1071,12 @@ export default function SettingsScreen() {
 
                   for (const dayKey of sortedDayKeys) {
                     const blocks = parsedBackup.blocksByDay[dayKey] ?? [];
-                    const actualBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'actual'));
-                    for (const block of actualBlocks) {
+                    const doneBlocks = sortByStartMin(blocks.filter((block) => block.lane === 'done'));
+                    for (const block of doneBlocks) {
                       const linkedPlannedId = block.linkedPlannedId ? plannedIdMap.get(block.linkedPlannedId) ?? null : null;
                       await insertBlock(
                         {
-                          lane: 'actual',
+                          lane: 'done',
                           title: block.title,
                           tags: [...block.tags],
                           startMin: block.startMin,
@@ -1145,7 +1160,7 @@ export default function SettingsScreen() {
                   let unresolvedLinks = 0;
                   const sortedBlocks = [
                     ...sortByStartMin(parsedDayBackup.blocks.filter((block) => block.lane === 'planned')),
-                    ...sortByStartMin(parsedDayBackup.blocks.filter((block) => block.lane === 'actual')),
+                    ...sortByStartMin(parsedDayBackup.blocks.filter((block) => block.lane === 'done')),
                   ];
 
                   for (const block of sortedBlocks) {
@@ -1178,7 +1193,7 @@ export default function SettingsScreen() {
                     }
 
                     let linkedPlannedId: string | null = null;
-                    if (block.lane === 'actual' && block.linkedPlannedId) {
+                    if (block.lane === 'done' && block.linkedPlannedId) {
                       linkedPlannedId = sourcePlannedToTargetId.get(block.linkedPlannedId) ?? null;
                       if (!linkedPlannedId) {
                         const sourcePlanned = importedPlannedById.get(block.linkedPlannedId);
@@ -1205,7 +1220,7 @@ export default function SettingsScreen() {
                         tags: [...block.tags],
                         startMin: block.startMin,
                         endMin: block.endMin,
-                        linkedPlannedId: block.lane === 'actual' ? linkedPlannedId : undefined,
+                        linkedPlannedId: block.lane === 'done' ? linkedPlannedId : undefined,
                         recurrenceId: block.recurrenceId ?? null,
                         recurrenceIndex: block.recurrenceIndex ?? null,
                         repeatRule: block.recurrenceId ? block.repeatRule ?? null : null,
@@ -1281,7 +1296,7 @@ export default function SettingsScreen() {
         let skippedDuplicate = 0;
         const plannedFirst = [
           ...parsedSummary.blocks.filter((block) => block.lane === 'planned'),
-          ...parsedSummary.blocks.filter((block) => block.lane === 'actual'),
+          ...parsedSummary.blocks.filter((block) => block.lane === 'done'),
         ];
 
         for (const block of plannedFirst) {
@@ -1297,7 +1312,7 @@ export default function SettingsScreen() {
           }
 
           const linkedPlannedId =
-            block.lane === 'actual'
+            block.lane === 'done'
               ? planLinkByKey.get(
                   getPlanLinkKey({ title: block.title, startMin: block.startMin, endMin: block.endMin })
                 ) ?? null
@@ -1310,7 +1325,7 @@ export default function SettingsScreen() {
               tags: block.tags,
               startMin: block.startMin,
               endMin: block.endMin,
-              linkedPlannedId: block.lane === 'actual' ? linkedPlannedId : undefined,
+              linkedPlannedId: block.lane === 'done' ? linkedPlannedId : undefined,
             },
             timelineDayKey
           );

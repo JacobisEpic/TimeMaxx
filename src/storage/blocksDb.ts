@@ -6,7 +6,14 @@ import { normalizeRepeatRule } from '@/src/utils/recurrence';
 const DB_NAME = 'timemaxx.db';
 // Preserve existing user data after the app rename.
 const LEGACY_DB_NAME = 'plan-vs-actual.db';
-const SCHEMA_VERSION = '4';
+const SCHEMA_VERSION = '5';
+
+const BLOCK_LANE_SORT_SQL = `CASE lane
+  WHEN 'planned' THEN 0
+  WHEN 'done' THEN 1
+  WHEN 'actual' THEN 1
+  ELSE 2
+END`;
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initPromise: Promise<void> | null = null;
@@ -21,7 +28,15 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 function parseLane(lane: string): Lane | null {
-  return lane === 'planned' || lane === 'actual' ? lane : null;
+  if (lane === 'planned' || lane === 'done') {
+    return lane;
+  }
+
+  if (lane === 'actual') {
+    return 'done';
+  }
+
+  return null;
 }
 
 function parseTags(tagsJson: string): string[] {
@@ -140,11 +155,15 @@ function mapRowToBlock(row: BlockRow): Block | null {
     endMin: row.endMin,
     title: row.title,
     tags: parseTags(row.tagsJson),
-    linkedPlannedId: lane === 'actual' ? row.linkedPlannedId : undefined,
+    linkedPlannedId: lane === 'done' ? row.linkedPlannedId : undefined,
     recurrenceId: row.recurrenceId,
     recurrenceIndex: row.recurrenceIndex,
     repeatRule: parseRepeatRule(row.recurrenceRuleJson, row.dayKey),
   };
+}
+
+async function migrateStoredDoneLaneIfNeeded(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.runAsync(`UPDATE blocks SET lane = 'done' WHERE lane = 'actual';`);
 }
 
 async function ensureSchema(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -219,23 +238,28 @@ async function migrateLegacyDatabaseIfNeeded(db: SQLite.SQLiteDatabase): Promise
     const legacyRows = await legacyDb.getAllAsync<StoredBlockRow>(
       `SELECT id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt
        FROM blocks
-       ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`
+       ORDER BY dayKey ASC, ${BLOCK_LANE_SORT_SQL}, startMin ASC, id ASC;`
     );
 
     await db.execAsync('BEGIN IMMEDIATE TRANSACTION;');
     try {
       for (const row of legacyRows) {
+        const lane = parseLane(row.lane);
+        if (!lane) {
+          continue;
+        }
+
         await db.runAsync(
           `INSERT OR REPLACE INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
           row.id,
           row.dayKey,
-          row.lane,
+          lane,
           row.startMin,
           row.endMin,
           row.title,
           row.tagsJson,
-          row.linkedPlannedId,
+          lane === 'done' ? row.linkedPlannedId : null,
           row.recurrenceId,
           row.recurrenceIndex,
           row.recurrenceRuleJson,
@@ -271,6 +295,7 @@ export async function initDb(): Promise<void> {
     const db = await getDb();
     await ensureSchema(db);
     await migrateLegacyDatabaseIfNeeded(db);
+    await migrateStoredDoneLaneIfNeeded(db);
 
     await db.runAsync(
       'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);',
@@ -289,7 +314,7 @@ export async function getBlocksForDay(dayKey: string): Promise<Block[]> {
     `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      WHERE dayKey = ?
-     ORDER BY lane ASC, startMin ASC, id ASC;`,
+     ORDER BY ${BLOCK_LANE_SORT_SQL}, startMin ASC, id ASC;`,
     dayKey
   );
 
@@ -305,7 +330,7 @@ export async function getBlocksForDayRange(dayKeyStart: string, dayKeyEnd: strin
     `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      WHERE dayKey >= ? AND dayKey <= ?
-     ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`,
+     ORDER BY dayKey ASC, ${BLOCK_LANE_SORT_SQL}, startMin ASC, id ASC;`,
     dayKeyStart,
     dayKeyEnd
   );
@@ -335,7 +360,7 @@ export async function getAllBlocksByDay(): Promise<Record<string, Block[]>> {
   const rows = await db.getAllAsync<BlockRow>(
     `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
-     ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`
+     ORDER BY dayKey ASC, ${BLOCK_LANE_SORT_SQL}, startMin ASC, id ASC;`
   );
 
   const blocksByDay: Record<string, Block[]> = {};
@@ -369,7 +394,7 @@ export async function getBlocksForRecurrence(recurrenceId: string): Promise<Bloc
     `SELECT dayKey, id, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson
      FROM blocks
      WHERE recurrenceId = ?
-     ORDER BY recurrenceIndex ASC, dayKey ASC, startMin ASC, id ASC;`,
+     ORDER BY recurrenceIndex ASC, dayKey ASC, ${BLOCK_LANE_SORT_SQL}, startMin ASC, id ASC;`,
     recurrenceId
   );
 
@@ -409,7 +434,7 @@ export async function insertBlock(
     input.endMin,
     input.title,
     JSON.stringify(input.tags),
-    input.lane === 'actual' ? input.linkedPlannedId ?? null : null,
+    input.lane === 'done' ? input.linkedPlannedId ?? null : null,
     input.recurrenceId ?? null,
     input.recurrenceIndex ?? null,
     input.repeatRule ? JSON.stringify(input.repeatRule) : null,
@@ -423,7 +448,7 @@ export async function insertBlock(
     endMin: input.endMin,
     title: input.title,
     tags: input.tags,
-    linkedPlannedId: input.lane === 'actual' ? input.linkedPlannedId ?? null : undefined,
+    linkedPlannedId: input.lane === 'done' ? input.linkedPlannedId ?? null : undefined,
     recurrenceId: input.recurrenceId ?? null,
     recurrenceIndex: input.recurrenceIndex ?? null,
     repeatRule: input.repeatRule ?? null,
@@ -444,7 +469,7 @@ export async function updateBlock(block: Block, dayKey: string): Promise<void> {
     block.endMin,
     block.title,
     JSON.stringify(block.tags),
-    block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
+    block.lane === 'done' ? block.linkedPlannedId ?? null : null,
     block.recurrenceId ?? null,
     block.recurrenceIndex ?? null,
     block.repeatRule ? JSON.stringify(block.repeatRule) : null,

@@ -4,7 +4,7 @@ import { clearAllBlocks, getMetaValue, setMetaValue } from '@/src/storage/blocks
 
 export type AppSettings = {
   plannedScanStartMin: number;
-  actualScanStartMin: number;
+  doneScanStartMin: number;
   dimInsteadOfHide: boolean;
   categories: { id: string; label: string; color: string }[];
   visibleCategoryIds: string[];
@@ -36,7 +36,7 @@ const PROTECTED_CATEGORIES: AppSettings['categories'] = [
 
 const DEFAULT_SETTINGS: AppSettings = {
   plannedScanStartMin: 9 * 60,
-  actualScanStartMin: 12 * 60,
+  doneScanStartMin: 12 * 60,
   dimInsteadOfHide: false,
   categories: DEFAULT_CATEGORIES,
   visibleCategoryIds: DEFAULT_CATEGORIES.map((category) => category.id),
@@ -44,7 +44,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 const META_KEYS = {
   plannedScanStartMin: 'settings_planned_scan_start_min',
-  actualScanStartMin: 'settings_actual_scan_start_min',
+  doneScanStartMin: 'settings_done_scan_start_min',
+  legacyDoneScanStartMin: 'settings_actual_scan_start_min',
   dimInsteadOfHide: 'settings_dim_instead_of_hide',
   categories: 'settings_categories',
   visibleCategoryIds: 'settings_visible_category_ids',
@@ -176,18 +177,24 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [dataVersion, setDataVersion] = useState(0);
 
   const refreshSettings = useCallback(async () => {
-    const [plannedRaw, actualRaw, dimRaw, categoriesRaw, visibleCategoryIdsRaw] = await Promise.all([
+    const [plannedRaw, doneRaw, legacyDoneRaw, dimRaw, categoriesRaw, visibleCategoryIdsRaw] = await Promise.all([
       getMetaValue(META_KEYS.plannedScanStartMin),
-      getMetaValue(META_KEYS.actualScanStartMin),
+      getMetaValue(META_KEYS.doneScanStartMin),
+      getMetaValue(META_KEYS.legacyDoneScanStartMin),
       getMetaValue(META_KEYS.dimInsteadOfHide),
       getMetaValue(META_KEYS.categories),
       getMetaValue(META_KEYS.visibleCategoryIds),
     ]);
     const categories = parseCategoriesSetting(categoriesRaw, DEFAULT_SETTINGS.categories);
+    const resolvedDoneRaw = doneRaw ?? legacyDoneRaw;
+
+    if (!doneRaw && legacyDoneRaw) {
+      await setMetaValue(META_KEYS.doneScanStartMin, legacyDoneRaw);
+    }
 
     setSettings({
       plannedScanStartMin: parseMinuteSetting(plannedRaw, DEFAULT_SETTINGS.plannedScanStartMin),
-      actualScanStartMin: parseMinuteSetting(actualRaw, DEFAULT_SETTINGS.actualScanStartMin),
+      doneScanStartMin: parseMinuteSetting(resolvedDoneRaw, DEFAULT_SETTINGS.doneScanStartMin),
       dimInsteadOfHide: parseBooleanSetting(dimRaw, DEFAULT_SETTINGS.dimInsteadOfHide),
       categories,
       visibleCategoryIds: parseVisibleCategoryIdsSetting(
@@ -224,7 +231,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
 
       await Promise.all([
         setMetaValue(META_KEYS.plannedScanStartMin, String(nextSettings.plannedScanStartMin)),
-        setMetaValue(META_KEYS.actualScanStartMin, String(nextSettings.actualScanStartMin)),
+        setMetaValue(META_KEYS.doneScanStartMin, String(nextSettings.doneScanStartMin)),
         setMetaValue(META_KEYS.dimInsteadOfHide, nextSettings.dimInsteadOfHide ? '1' : '0'),
         setMetaValue(META_KEYS.categories, JSON.stringify(nextSettings.categories)),
         setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(nextSettings.visibleCategoryIds)),
