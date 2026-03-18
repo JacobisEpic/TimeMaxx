@@ -1662,13 +1662,6 @@ export default function SettingsScreen() {
                   <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
                 </Pressable>
               ))}
-              <Pressable accessibilityLabel="Contact support by email" style={[styles.listRow, styles.legalRow]} onPress={openSupportEmail}>
-                <View style={styles.legalRowCopy}>
-                  <Text style={styles.categoryName}>Contact Email</Text>
-                  <Text style={styles.legalSummary}>{SUPPORT_EMAIL}</Text>
-                </View>
-                <Ionicons name="mail-outline" size={16} color={UI_COLORS.neutralTextSoft} />
-              </Pressable>
             </View>
           </View>
 
@@ -1799,11 +1792,23 @@ export default function SettingsScreen() {
                 ))}
               </ScrollView>
               <View style={styles.editorActions}>
+                {activeLegalDoc?.key === 'support' ? (
+                  <Pressable style={styles.editorSecondaryButton} onPress={openSupportEmail}>
+                    <Text style={styles.editorSecondaryButtonText}>Email support</Text>
+                  </Pressable>
+                ) : null}
                 {activeLegalDoc?.publicUrl ? (
                   <Pressable
-                    style={styles.editorSaveButton}
+                    style={activeLegalDoc?.key === 'support' ? styles.editorSecondaryButton : styles.editorSaveButton}
                     onPress={() => openPublicUrl(activeLegalDoc.publicUrl)}>
-                    <Text style={styles.editorSaveButtonText}>Open public URL</Text>
+                    <Text
+                      style={
+                        activeLegalDoc?.key === 'support'
+                          ? styles.editorSecondaryButtonText
+                          : styles.editorSaveButtonText
+                      }>
+                      Open public URL
+                    </Text>
                   </Pressable>
                 ) : (
                   <View style={styles.legalPublicUrlHint}>
@@ -2524,6 +2529,22 @@ const styles = StyleSheet.create({
   },
   editorSaveButtonText: {
     color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  editorSecondaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: UI_RADIUS.control,
+    borderWidth: 1,
+    borderColor: UI_COLORS.neutralBorder,
+    backgroundColor: UI_COLORS.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  editorSecondaryButtonText: {
+    color: UI_COLORS.neutralText,
     fontSize: 13,
     fontWeight: '700',
   },

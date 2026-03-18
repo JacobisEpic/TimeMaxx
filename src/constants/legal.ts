@@ -19,11 +19,13 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     summary: 'How data is stored, used, and deleted.',
     publicUrl: RELEASE_METADATA.legalPublicUrls.privacy,
     sections: [
-      'TimeMaxx stores your time blocks and settings locally on your device.',
-      'The app does not require account creation, and it does not send your timeline data to our servers.',
+      'TimeMaxx does not require an account and does not operate a backend service for your timeline data.',
+      'TimeMaxx does not collect your personal data or timeline data on our servers.',
+      'TimeMaxx does not transmit your timeline data to us.',
+      'Your time blocks and settings are stored locally on your device.',
       'If you choose to share a summary, the exported text is generated on-device and shared only through the destination you pick.',
       'You can delete your data at any time from Settings by using "Reset all data."',
-      `For privacy questions, contact support at ${SUPPORT_EMAIL}.`,
+      'For privacy questions, use the Support & FAQ section in Settings.',
     ],
   },
   {
@@ -36,7 +38,7 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
       'You are responsible for your own use of the app and any decisions made from its data.',
       'You may not attempt to reverse engineer, abuse, or interfere with normal app operation.',
       'The app may change over time, including features and availability.',
-      `For support requests, contact ${SUPPORT_EMAIL}.`,
+      'For support requests, use the Support & FAQ section in Settings.',
     ],
   },
   {
@@ -45,7 +47,7 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     summary: 'Where to get help and report issues.',
     publicUrl: RELEASE_METADATA.legalPublicUrls.support,
     sections: [
-      `Need help? Email ${SUPPORT_EMAIL}.`,
+      'Need help? Use the email support action below.',
       'Please include your app version, device model, iOS version, and steps to reproduce.',
       'The most common fix for data issues is to force-close and reopen the app.',
       'If issues continue, include screenshots and exact times shown in the timeline.',
