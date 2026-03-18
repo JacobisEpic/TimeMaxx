@@ -55,6 +55,26 @@ Why: Debug builds usually load JavaScript from Metro. Without it, the app may fa
 
 If you run a Release build/TestFlight build, Metro is not required.
 
+## 7. Debug vs Release on a physical iPhone
+
+- `Debug` builds do not embed the JavaScript bundle for this app. They expect Metro to be running on your Mac.
+- `Release` builds embed `main.jsbundle` and can launch without Metro.
+
+If you see logs like:
+
+- `Build/Products/Debug-iphoneos/...`
+- `Could not connect to the server`
+- `http://<your-mac-ip>:8081/status`
+- `No script URL provided. Make sure the packager is running`
+
+then the app is usually not "broken". You installed a `Debug` build and the phone cannot reach Metro.
+
+Use one of these paths:
+
+- For active development: run `npm run start` and keep the Mac and iPhone on the same network, then launch the `Debug` build again.
+- For standalone device testing: in Xcode set `Product -> Scheme -> Edit Scheme -> Run -> Build Configuration -> Release`, then run on the iPhone again.
+- For App Store submission: use `Product -> Archive`. Archive uploads are `Release` builds and do not require Metro.
+
 ## Common statuses and troubleshooting
 
 - `Copying shared cache symbols ...`
