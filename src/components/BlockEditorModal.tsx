@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Keyboard,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -77,7 +78,11 @@ type BlockEditorModalProps = {
 const CATEGORY_OPTIONS = DEFAULT_CATEGORIES;
 
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
+const HOUR_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1);
+const PERIOD_OPTIONS = ['AM', 'PM'] as const;
 const SHEET_VISIBLE_HEIGHT = '86%';
+const TIME_WHEEL_REPEAT_COUNT = Platform.OS === 'ios' ? 5 : 1;
+const TIME_WHEEL_CENTER_REPEAT_INDEX = Math.floor(TIME_WHEEL_REPEAT_COUNT / 2);
 const REPEAT_OPTIONS: { value: BlockRepeatPreset; label: string }[] = [
   { value: 'none', label: 'Does not repeat' },
   { value: 'daily', label: 'Daily' },
@@ -110,6 +115,15 @@ const DONE_TEXT_INPUT_PROPS = {
   enterKeyHint: 'done' as const,
   inputAccessoryViewButtonLabel: 'Done',
   submitBehavior: 'blurAndSubmit' as const,
+};
+
+type CircularWheelItem<T extends string | number> = {
+  key: string;
+  label: string;
+  logicalIndex: number;
+  repeatIndex: number;
+  token: string;
+  value: T;
 };
 
 type CalendarCell = {
@@ -180,9 +194,47 @@ function getStartAndDuration(startValue: string, endValue: string): { startMin: 
   return { startMin: parsedStart, durationMin: parsedEnd - parsedStart };
 }
 
+function buildCircularWheelItems<T extends string | number>(
+  values: readonly T[],
+  getLabel: (value: T) => string
+): CircularWheelItem<T>[] {
+  return Array.from({ length: TIME_WHEEL_REPEAT_COUNT }, (_, repeatIndex) =>
+    values.map((value, logicalIndex) => ({
+      key: `wheel-${repeatIndex}-${logicalIndex}-${String(value)}`,
+      label: getLabel(value),
+      logicalIndex,
+      repeatIndex,
+      token: `${repeatIndex}-${logicalIndex}`,
+      value,
+    }))
+  ).flat();
+}
+
+function getCircularWheelToken<T extends string | number>(
+  items: readonly CircularWheelItem<T>[],
+  values: readonly T[],
+  value: T
+): string {
+  const logicalIndex = values.findIndex((entry) => entry === value);
+  const safeLogicalIndex = logicalIndex >= 0 ? logicalIndex : 0;
+  const selectedItem = items[TIME_WHEEL_CENTER_REPEAT_INDEX * values.length + safeLogicalIndex] ?? items[0];
+  return selectedItem?.token ?? '';
+}
+
+function resolveCircularWheelSelection<T extends string | number>(
+  items: readonly CircularWheelItem<T>[],
+  itemIndex: number,
+  fallbackToken: string
+): CircularWheelItem<T> | null {
+  return items[itemIndex] ?? items.find((item) => item.token === fallbackToken) ?? null;
+}
+
 function dismissKeyboardOnSubmit() {
   Keyboard.dismiss();
 }
+
+const HOUR_WHEEL_ITEMS = buildCircularWheelItems(HOUR_OPTIONS, (value) => String(value));
+const MINUTE_WHEEL_ITEMS = buildCircularWheelItems(MINUTE_OPTIONS, (value) => String(value).padStart(2, '0'));
 
 export function BlockEditorModal({
   visible,
@@ -233,8 +285,14 @@ export function BlockEditorModal({
     return getMonthStart(parsed ?? new Date());
   });
   const [wheelHour, setWheelHour] = useState(8);
+  const [wheelHourToken, setWheelHourToken] = useState(() =>
+    getCircularWheelToken(HOUR_WHEEL_ITEMS, HOUR_OPTIONS, 8)
+  );
   const [wheelMinute, setWheelMinute] = useState(0);
-  const [wheelPeriod, setWheelPeriod] = useState<'AM' | 'PM'>('AM');
+  const [wheelMinuteToken, setWheelMinuteToken] = useState(() =>
+    getCircularWheelToken(MINUTE_WHEEL_ITEMS, MINUTE_OPTIONS, 0)
+  );
+  const [wheelPeriod, setWheelPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('AM');
   const [wheelDuration, setWheelDuration] = useState(60);
 
   const resolvedCategoryOptions = useMemo(
@@ -342,7 +400,9 @@ export function BlockEditorModal({
     const period: 'AM' | 'PM' = sourceHour >= 12 ? 'PM' : 'AM';
     const minute = sourceMinute >= 0 && sourceMinute <= 59 ? sourceMinute : 0;
     setWheelHour(hour12);
+    setWheelHourToken(getCircularWheelToken(HOUR_WHEEL_ITEMS, HOUR_OPTIONS, hour12));
     setWheelMinute(minute);
+    setWheelMinuteToken(getCircularWheelToken(MINUTE_WHEEL_ITEMS, MINUTE_OPTIONS, minute));
     setWheelPeriod(period);
     setWheelDuration(timeState.durationMin);
   }, [pickerType, selectedEndHour, selectedEndMinute, selectedHour, selectedMinute, timeState.durationMin]);
@@ -865,27 +925,47 @@ export function BlockEditorModal({
             <View style={styles.pickerWheelRow}>
               <View style={styles.pickerWheelColumn}>
                 <Picker
-                  selectedValue={wheelHour}
-                  onValueChange={(nextHour) => {
-                    const value = Number(nextHour);
+                  selectedValue={wheelHourToken}
+                  onValueChange={(nextToken, itemIndex) => {
+                    const selectedItem = resolveCircularWheelSelection(HOUR_WHEEL_ITEMS, itemIndex, String(nextToken));
+                    if (!selectedItem) {
+                      return;
+                    }
+
+                    const value = Number(selectedItem.value);
+                    const centeredToken =
+                      selectedItem.repeatIndex === TIME_WHEEL_CENTER_REPEAT_INDEX
+                        ? selectedItem.token
+                        : getCircularWheelToken(HOUR_WHEEL_ITEMS, HOUR_OPTIONS, value);
                     setWheelHour(value);
+                    setWheelHourToken(centeredToken);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', value, wheelMinute, wheelPeriod);
                   }}>
-                  {Array.from({ length: 12 }, (_, index) => (
-                    <Picker.Item key={`hour-wheel-${index + 1}`} label={String(index + 1)} value={index + 1} />
+                  {HOUR_WHEEL_ITEMS.map((item) => (
+                    <Picker.Item key={item.key} label={item.label} value={item.token} />
                   ))}
                 </Picker>
               </View>
               <View style={styles.pickerWheelColumn}>
                 <Picker
-                  selectedValue={wheelMinute}
-                  onValueChange={(nextMinute) => {
-                    const value = Number(nextMinute);
+                  selectedValue={wheelMinuteToken}
+                  onValueChange={(nextToken, itemIndex) => {
+                    const selectedItem = resolveCircularWheelSelection(MINUTE_WHEEL_ITEMS, itemIndex, String(nextToken));
+                    if (!selectedItem) {
+                      return;
+                    }
+
+                    const value = Number(selectedItem.value);
+                    const centeredToken =
+                      selectedItem.repeatIndex === TIME_WHEEL_CENTER_REPEAT_INDEX
+                        ? selectedItem.token
+                        : getCircularWheelToken(MINUTE_WHEEL_ITEMS, MINUTE_OPTIONS, value);
                     setWheelMinute(value);
+                    setWheelMinuteToken(centeredToken);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, value, wheelPeriod);
                   }}>
-                  {MINUTE_OPTIONS.map((value) => (
-                    <Picker.Item key={`minute-wheel-${value}`} label={String(value).padStart(2, '0')} value={value} />
+                  {MINUTE_WHEEL_ITEMS.map((item) => (
+                    <Picker.Item key={item.key} label={item.label} value={item.token} />
                   ))}
                 </Picker>
               </View>
@@ -893,12 +973,13 @@ export function BlockEditorModal({
                 <Picker
                   selectedValue={wheelPeriod}
                   onValueChange={(nextPeriod) => {
-                    const value = nextPeriod === 'AM' ? 'AM' : 'PM';
+                    const value = nextPeriod === 'PM' ? 'PM' : 'AM';
                     setWheelPeriod(value);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, wheelMinute, value);
                   }}>
-                  <Picker.Item label="AM" value="AM" />
-                  <Picker.Item label="PM" value="PM" />
+                  {PERIOD_OPTIONS.map((item) => (
+                    <Picker.Item key={item} label={item} value={item} />
+                  ))}
                 </Picker>
               </View>
             </View>
