@@ -1,32 +1,87 @@
 # Privacy Policy
 
-Last updated: March 18, 2026
+**Last updated:** March 18, 2026
 
 ## Overview
-TimeMaxx is a local-first productivity app for tracking planned and completed time blocks.
-TimeMaxx does not require an account and does not operate a backend service for your timeline data.
 
-## Data Collection
-- We do not collect your personal data or timeline data on our servers.
-- TimeMaxx does not transmit your timeline data to us.
+TimeMaxx is a local-first productivity application designed to help users track planned and completed time blocks.
 
-## Data Stored On Your Device
-- Timeline blocks you create (title, category, start/end times)
-- App settings (categories and preferences)
+TimeMaxx does not require user accounts and does not operate a backend service for storing your timeline data. Your data remains on your device.
+
+---
+
+## Information We Collect
+
+TimeMaxx does **not collect, store, or transmit personal data or timeline data to external servers**.
+
+We do not:
+
+* Require account creation
+* Collect personal identifiers (such as name, email, or location)
+* Track your activity across apps or websites
+
+---
+
+## Data Stored on Your Device
+
+The app stores the following data locally on your device:
+
+* Timeline blocks (e.g., title, category, start and end times)
+* App settings and preferences (e.g., categories)
+
+This data is stored solely for app functionality.
+
+---
 
 ## How Data Is Stored
-- App data is stored locally on your device using on-device SQLite.
-- We do not require account creation to use core features.
-- TimeMaxx does not use a cloud sync or app backend for your timeline data in this version.
 
-## Sharing
-- If you use share/export, the app generates text locally and sends it only to the destination you choose.
+* All data is stored locally using on-device storage (SQLite).
+* TimeMaxx does not use cloud storage or remote databases for timeline data in this version.
+* We do not have access to your locally stored data.
+
+---
+
+## Data Sharing
+
+TimeMaxx does not share your data with third parties.
+
+If you choose to use export or sharing features:
+
+* Data is generated locally on your device
+* Data is only shared with destinations you explicitly select (e.g., messaging apps, email)
+
+---
 
 ## Data Deletion
-- You can delete all local app data at any time from Settings -> Reset all data.
 
-## Children
-- The app is not directed to children under 13.
+You can delete all app data at any time by using:
+
+**Settings → Reset All Data**
+
+Deleting the app will also remove all locally stored data.
+
+---
+
+## Third-Party Services
+
+TimeMaxx does not integrate with third-party analytics, advertising, or tracking services.
+
+---
+
+## Children’s Privacy
+
+TimeMaxx is not directed to children under the age of 13. We do not knowingly collect personal data from children.
+
+---
+
+## Changes to This Policy
+
+We may update this Privacy Policy from time to time. Updates will be reflected by the “Last updated” date above.
+
+---
 
 ## Contact
-- Email: jacobchin.builds@gmail.com
+
+If you have any questions about this Privacy Policy, you can contact:
+
+**Email:** [jacobchin.builds@gmail.com](mailto:jacobchin.builds@gmail.com)
