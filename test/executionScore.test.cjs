@@ -16,9 +16,9 @@ test('isExcludedFromExecutionMetrics excludes none, other, and break', () => {
 test('computeExecutionScoreSummary subtracts only excess break time', () => {
   const summary = computeExecutionScoreSummary([
     { lane: 'planned', tags: ['work'], startMin: 9 * 60, endMin: 11 * 60 },
-    { lane: 'actual', tags: ['work'], startMin: 9 * 60, endMin: 11 * 60 },
+    { lane: 'done', tags: ['work'], startMin: 9 * 60, endMin: 11 * 60 },
     { lane: 'planned', tags: ['break'], startMin: 12 * 60, endMin: 12 * 60 + 30 },
-    { lane: 'actual', tags: ['break'], startMin: 12 * 60, endMin: 13 * 60 },
+    { lane: 'done', tags: ['break'], startMin: 12 * 60, endMin: 13 * 60 },
   ]);
 
   assert.equal(summary.plannedMinutes, 120);
@@ -32,8 +32,8 @@ test('computeExecutionScoreSummary subtracts only excess break time', () => {
 
 test('computeExecutionScoreSummary returns null score when productive planned time is zero', () => {
   const summary = computeExecutionScoreSummary([
-    { lane: 'actual', tags: ['break'], startMin: 12 * 60, endMin: 13 * 60 },
-    { lane: 'actual', tags: ['other'], startMin: 14 * 60, endMin: 15 * 60 },
+    { lane: 'done', tags: ['break'], startMin: 12 * 60, endMin: 13 * 60 },
+    { lane: 'done', tags: ['other'], startMin: 14 * 60, endMin: 15 * 60 },
   ]);
 
   assert.equal(summary.plannedMinutes, 0);
@@ -46,7 +46,7 @@ test('computeExecutionScoreSummary returns null score when productive planned ti
 test('computeExecutionScoreSummary allows negative score from unplanned break', () => {
   const summary = computeExecutionScoreSummary([
     { lane: 'planned', tags: ['work'], startMin: 9 * 60, endMin: 11 * 60 },
-    { lane: 'actual', tags: ['break'], startMin: 12 * 60, endMin: 12 * 60 + 30 },
+    { lane: 'done', tags: ['break'], startMin: 12 * 60, endMin: 12 * 60 + 30 },
   ]);
 
   assert.equal(summary.plannedMinutes, 120);

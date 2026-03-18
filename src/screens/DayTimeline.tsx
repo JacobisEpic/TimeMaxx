@@ -45,7 +45,7 @@ import { computeExecutionScoreSummary } from '@/src/utils/executionScore';
 import { buildRepeatDayKeys, normalizeRepeatRule } from '@/src/utils/recurrence';
 import { clamp, formatHHMM, formatMinutesAmPm, parseHHMM, roundTo15 } from '@/src/utils/time';
 
-type ViewMode = 'compare' | 'planned' | 'actual';
+type ViewMode = 'compare' | 'planned' | 'done';
 
 type EditorState = {
   visible: boolean;
@@ -345,6 +345,11 @@ function formatCurrentTimeLabel(min: number): string {
   return formatMinutesAmPm(clamp(Math.round(min), 0, MINUTES_PER_DAY - 1), { includePeriod: false });
 }
 
+function getCurrentMinute(): number {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
 function sortByStartMin(items: TimeBlock[]): TimeBlock[] {
   return [...items].sort(
     (a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.id.localeCompare(b.id)
@@ -498,10 +503,7 @@ export default function DayTimeline() {
 
   const [dayKey, setDayKey] = useState(() => routeDayKey ?? getLocalDayKey());
   const [dataReloadTick, setDataReloadTick] = useState(0);
-  const [clockMinute, setClockMinute] = useState(() => {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-  });
+  const [clockMinute, setClockMinute] = useState(getCurrentMinute);
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
@@ -510,13 +512,13 @@ export default function DayTimeline() {
   const [lastUsedCreateLane, setLastUsedCreateLane] = useState<Lane>('planned');
   const [laneVisibility, setLaneVisibility] = useState<Record<Lane, boolean>>({
     planned: true,
-    actual: true,
+    done: true,
   });
-  const viewMode: ViewMode = laneVisibility.planned && laneVisibility.actual
+  const viewMode: ViewMode = laneVisibility.planned && laneVisibility.done
     ? 'compare'
     : laneVisibility.planned
       ? 'planned'
-      : 'actual';
+      : 'done';
   const [toolsSheetVisible, setToolsSheetVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [calendarScoreByDay, setCalendarScoreByDay] = useState<Record<string, number | null>>({});
@@ -619,7 +621,7 @@ export default function DayTimeline() {
   const copiedPlannedIdSet = useMemo(
     () => {
       const linkedIds = sortedBlocks.reduce<string[]>((acc, block) => {
-        if (block.lane === 'actual' && block.linkedPlannedId) {
+        if (block.lane === 'done' && block.linkedPlannedId) {
           acc.push(block.linkedPlannedId);
         }
         return acc;
@@ -661,7 +663,7 @@ export default function DayTimeline() {
     [categoryOptions]
   );
   const categoryVarianceRows = useMemo<CategoryVarianceRow[]>(() => {
-    const totals = new Map<string, { planned: number; actual: number }>();
+    const totals = new Map<string, { planned: number; done: number }>();
 
     sortedBlocks.forEach((block) => {
       if (isExcludedFromCategoryVariance(block)) {
@@ -669,12 +671,12 @@ export default function DayTimeline() {
       }
 
       const key = getCategoryKey(block);
-      const value = totals.get(key) ?? { planned: 0, actual: 0 };
+      const value = totals.get(key) ?? { planned: 0, done: 0 };
       const duration = Math.max(0, block.endMin - block.startMin);
       if (block.lane === 'planned') {
         value.planned += duration;
       } else {
-        value.actual += duration;
+        value.done += duration;
       }
       totals.set(key, value);
     });
@@ -682,12 +684,12 @@ export default function DayTimeline() {
     return [...totals.entries()]
       .map(([tag, value]) => ({
       tag,
-      label: categoryLabelMap[tag] ?? getCategoryLabel(tag),
+      label: getCategoryLabel(tag, categoryLabelMap),
       color: categoryColorMap[tag] ?? getCategoryColor(tag),
       plannedMinutes: value.planned,
-      doneMinutes: value.actual,
-      deltaMinutes: value.actual - value.planned,
-      deltaPercent: computeDeltaPercent(value.actual, value.planned),
+      doneMinutes: value.done,
+      deltaMinutes: value.done - value.planned,
+      deltaPercent: computeDeltaPercent(value.done, value.planned),
     }))
       .sort((a, b) => Math.abs(b.deltaMinutes) - Math.abs(a.deltaMinutes) || a.label.localeCompare(b.label));
   }, [categoryColorMap, categoryLabelMap, sortedBlocks]);
@@ -1157,7 +1159,7 @@ export default function DayTimeline() {
 
     const loadTimelineZoomPrefs = async () => {
       try {
-        const [sharedRaw, legacyCompareRaw, legacyPlannedRaw, legacyActualRaw] = await Promise.all([
+        const [sharedRaw, legacyCompareRaw, legacyPlannedRaw, legacyDoneRaw] = await Promise.all([
           getMetaValue(TIMELINE_ZOOM_META_KEY),
           getMetaValue(LEGACY_TIMELINE_ZOOM_META_KEYS[0]),
           getMetaValue(LEGACY_TIMELINE_ZOOM_META_KEYS[1]),
@@ -1168,7 +1170,7 @@ export default function DayTimeline() {
           return;
         }
 
-        const legacyRaw = legacyCompareRaw ?? legacyPlannedRaw ?? legacyActualRaw;
+        const legacyRaw = legacyCompareRaw ?? legacyPlannedRaw ?? legacyDoneRaw;
         const nextZoom = parseTimelineZoom(sharedRaw ?? legacyRaw, DEFAULT_TIMELINE_ZOOM);
         setTimelineZoom(nextZoom);
         if (!sharedRaw && legacyRaw) {
@@ -1306,12 +1308,23 @@ export default function DayTimeline() {
   }, [dayKey, syncTimelineViewportTop]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = new Date();
-      setClockMinute(now.getHours() * 60 + now.getMinutes());
-    }, 60_000);
+    let minuteInterval: ReturnType<typeof setInterval> | null = null;
+    const updateClock = () => setClockMinute(getCurrentMinute());
+    const msUntilNextMinute = 60_000 - (Date.now() % 60_000);
 
-    return () => clearInterval(timer);
+    updateClock();
+
+    const minuteBoundaryTimeout = setTimeout(() => {
+      updateClock();
+      minuteInterval = setInterval(updateClock, 60_000);
+    }, msUntilNextMinute);
+
+    return () => {
+      clearTimeout(minuteBoundaryTimeout);
+      if (minuteInterval) {
+        clearInterval(minuteInterval);
+      }
+    };
   }, []);
 
   const showFeedback = useCallback((message: string) => {
@@ -1381,7 +1394,7 @@ export default function DayTimeline() {
       repeatOccurrenceCountText: String(repeatRule?.occurrenceCount ?? 10),
       repeatDirty: false,
       isRecurringSource: Boolean(block.recurrenceId),
-      linkedPlannedId: block.lane === 'actual' ? block.linkedPlannedId ?? null : null,
+      linkedPlannedId: block.lane === 'done' ? block.linkedPlannedId ?? null : null,
       errorText: null,
     });
   }, [dayKey]);
@@ -1564,7 +1577,7 @@ export default function DayTimeline() {
     setEditorState((current) => ({
       ...current,
       lane,
-      linkedPlannedId: lane === 'actual' ? current.linkedPlannedId : null,
+      linkedPlannedId: lane === 'done' ? current.linkedPlannedId : null,
       errorText: null,
     }));
   }, []);
@@ -1686,11 +1699,11 @@ export default function DayTimeline() {
         return;
       }
 
-      const actualBlocks = sortedBlocks.filter((block) => block.lane === 'actual');
+      const doneBlocks = sortedBlocks.filter((block) => block.lane === 'done');
       const targetStartMin =
-        actualBlocks.length === 0
+        doneBlocks.length === 0
           ? plannedBlock.startMin
-          : findFirstAvailableStartMinAtOrAfter(actualBlocks, durationMin, plannedBlock.startMin);
+          : findFirstAvailableStartMinAtOrAfter(doneBlocks, durationMin, plannedBlock.startMin);
 
       if (targetStartMin === null) {
         showFeedback('No room in Done.');
@@ -1704,7 +1717,7 @@ export default function DayTimeline() {
         try {
           const insertedBlock = await insertBlock(
             {
-              lane: 'actual',
+              lane: 'done',
               title: plannedBlock.title,
               tags: [...plannedBlock.tags],
               startMin: targetStartMin,
@@ -1735,11 +1748,11 @@ export default function DayTimeline() {
         return;
       }
 
-      const linkedActualBlocks = sortedBlocks.filter(
-        (block) => block.lane === 'actual' && block.linkedPlannedId === plannedBlockId
+      const linkedDoneBlocks = sortedBlocks.filter(
+        (block) => block.lane === 'done' && block.linkedPlannedId === plannedBlockId
       );
 
-      if (linkedActualBlocks.length === 0) {
+      if (linkedDoneBlocks.length === 0) {
         showFeedback('Not in Done.');
         return;
       }
@@ -1747,11 +1760,11 @@ export default function DayTimeline() {
       planCheckboxMutationInFlightRef.current.add(plannedBlockId);
       void (async () => {
         try {
-          await Promise.all(linkedActualBlocks.map((block) => deleteBlock(block.id)));
+          await Promise.all(linkedDoneBlocks.map((block) => deleteBlock(block.id)));
           setBlocks((current) =>
             sortByStartMin(
               current.filter(
-                (block) => !(block.lane === 'actual' && block.linkedPlannedId === plannedBlockId)
+                (block) => !(block.lane === 'done' && block.linkedPlannedId === plannedBlockId)
               )
             )
           );
@@ -1838,7 +1851,7 @@ export default function DayTimeline() {
       const runEdit = (scope: SeriesEditScope) => {
         void (async () => {
           try {
-            const linkedPlannedIdForSingle = editorState.lane === 'actual' ? normalizedLinkedPlannedId : undefined;
+            const linkedPlannedIdForSingle = editorState.lane === 'done' ? normalizedLinkedPlannedId : undefined;
             const shouldConvertSingleBlockToSeries =
               !existing.recurrenceId && editorState.repeatPreset !== 'none';
 
@@ -1906,7 +1919,7 @@ export default function DayTimeline() {
                     tags: nextTags,
                     startMin,
                     endMin,
-                    linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                    linkedPlannedId: editorState.lane === 'done' ? null : undefined,
                     recurrenceId: nextRecurrenceId,
                     recurrenceIndex: repeatDayIndexByKey.get(dayKey) ?? 1,
                     repeatRule: recurringRule,
@@ -1927,7 +1940,7 @@ export default function DayTimeline() {
                     tags: nextTags,
                     startMin,
                     endMin,
-                    linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                    linkedPlannedId: editorState.lane === 'done' ? null : undefined,
                     recurrenceId: nextRecurrenceId,
                     recurrenceIndex: repeatDayIndexByKey.get(targetDayKey) ?? null,
                     repeatRule: recurringRule,
@@ -2033,7 +2046,7 @@ export default function DayTimeline() {
                   tags: nextTags,
                   startMin,
                   endMin,
-                  linkedPlannedId: editorState.lane === 'actual' ? null : undefined,
+                  linkedPlannedId: editorState.lane === 'done' ? null : undefined,
                   recurrenceId: nextRecurrenceId,
                   recurrenceIndex: target.block.recurrenceIndex ?? null,
                   repeatRule,
@@ -2137,7 +2150,7 @@ export default function DayTimeline() {
                   startMin,
                   endMin,
                   linkedPlannedId:
-                    editorState.lane === 'actual'
+                    editorState.lane === 'done'
                       ? nextRecurrenceId
                         ? null
                         : normalizedLinkedPlannedId
@@ -2200,7 +2213,7 @@ export default function DayTimeline() {
       startMin,
       endMin,
       linkedPlannedId:
-        editorState.lane === 'actual' && editorState.repeatPreset === 'none'
+        editorState.lane === 'done' && editorState.repeatPreset === 'none'
           ? normalizedLinkedPlannedId
           : undefined,
       recurrenceId: null,
@@ -2245,7 +2258,7 @@ export default function DayTimeline() {
             {
               ...newBlockInput,
               linkedPlannedId:
-                editorState.lane === 'actual'
+                editorState.lane === 'done'
                   ? recurrenceId
                     ? null
                     : normalizedLinkedPlannedId
@@ -2582,9 +2595,9 @@ export default function DayTimeline() {
     [buildCreateGesture, selectedLane]
   );
   const plannedCreateGesture = useMemo(() => buildCreateGesture('planned'), [buildCreateGesture]);
-  const actualCreateGesture = useMemo(() => buildCreateGesture('actual'), [buildCreateGesture]);
+  const doneCreateGesture = useMemo(() => buildCreateGesture('done'), [buildCreateGesture]);
 
-  const compareMode = laneVisibility.planned && laneVisibility.actual;
+  const compareMode = laneVisibility.planned && laneVisibility.done;
 
   useEffect(() => {
     if (focusedPlannedId === null) {
@@ -2629,7 +2642,7 @@ export default function DayTimeline() {
 
     return {
       planned: toRenderable('planned'),
-      actual: toRenderable('actual'),
+      done: toRenderable('done'),
     };
   }, [focusedPlannedId, sortedBlocks, visibleCategoryIdSet]);
 
@@ -2649,18 +2662,18 @@ export default function DayTimeline() {
   }, [pixelsPerMinute, timelineCanvasHeight]);
   const setViewMode = useCallback((mode: ViewMode) => {
     if (mode === 'compare') {
-      setLaneVisibility({ planned: true, actual: true });
+      setLaneVisibility({ planned: true, done: true });
       return;
     }
 
     if (mode === 'planned') {
-      setLaneVisibility({ planned: true, actual: false });
+      setLaneVisibility({ planned: true, done: false });
       setSelectedLane('planned');
       return;
     }
 
-    setLaneVisibility({ planned: false, actual: true });
-    setSelectedLane('actual');
+    setLaneVisibility({ planned: false, done: true });
+    setSelectedLane('done');
   }, []);
 
   const handleSelectCalendarDay = useCallback(
@@ -2866,7 +2879,7 @@ export default function DayTimeline() {
       <View style={styles.dayContent}>
           <View style={styles.topControlRow}>
             <View style={styles.segmentedControl}>
-              {(['compare', 'planned', 'actual'] as ViewMode[]).map((mode) => {
+              {(['compare', 'planned', 'done'] as ViewMode[]).map((mode) => {
                 const selected = viewMode === mode;
 
                 return (
@@ -2932,10 +2945,10 @@ export default function DayTimeline() {
 
           {compareMode ? (
             <View style={styles.compareWrap}>
-              {(['planned', 'actual'] as Lane[]).map((lane, laneIndex) => (
+              {(['planned', 'done'] as Lane[]).map((lane, laneIndex) => (
                 <GestureDetector
                   key={lane}
-                  gesture={lane === 'planned' ? plannedCreateGesture : actualCreateGesture}>
+                  gesture={lane === 'planned' ? plannedCreateGesture : doneCreateGesture}>
                   <View
                     style={[
                       styles.laneSurface,
@@ -2976,6 +2989,7 @@ export default function DayTimeline() {
                       copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
                       onCopyCheckboxPress={handlePlanCheckboxPress}
                       categoryColorMap={categoryColorMap}
+                      categoryLabelMap={categoryLabelMap}
                       interactive={!dimmed && !isPinching}
                       dimmed={dimmed}
                       pixelsPerMinute={pixelsPerMinute}
@@ -3039,6 +3053,7 @@ export default function DayTimeline() {
                     copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
                     onCopyCheckboxPress={handlePlanCheckboxPress}
                     categoryColorMap={categoryColorMap}
+                    categoryLabelMap={categoryLabelMap}
                     interactive={!dimmed && !isPinching}
                     dimmed={dimmed}
                     pixelsPerMinute={pixelsPerMinute}
@@ -3288,7 +3303,7 @@ export default function DayTimeline() {
                   <View style={styles.categoryTrack}>
                     <View
                       style={[
-                        styles.categoryBarActual,
+                        styles.categoryBarDone,
                         {
                           width: `${
                             scorecardMetrics.plannedMinutes > 0
@@ -3333,7 +3348,7 @@ export default function DayTimeline() {
                     <View style={styles.categoryTrack}>
                       <View
                         style={[
-                          styles.categoryBarActual,
+                          styles.categoryBarDone,
                           {
                             width: `${
                               row.plannedMinutes > 0
@@ -3870,7 +3885,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderColor: 'transparent',
   },
-  summaryCardActual: {
+  summaryCardDone: {
     backgroundColor: 'transparent',
     borderColor: 'transparent',
   },
@@ -3896,8 +3911,8 @@ const styles = StyleSheet.create({
   summaryCardValuePlanned: {
     color: UI_COLORS.planned,
   },
-  summaryCardValueActual: {
-    color: UI_COLORS.actual,
+  summaryCardValueDone: {
+    color: UI_COLORS.done,
   },
   summaryCardValueFulfillment: {
     color: UI_COLORS.accent,
@@ -4125,7 +4140,7 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 999,
   },
-  categoryBarActual: {
+  categoryBarDone: {
     height: '100%',
     borderRadius: 999,
   },

@@ -452,7 +452,7 @@ export function BlockEditorModal({
             </Pressable>
           </View>
           <View style={styles.headerLaneRow}>
-            {(['planned', 'actual'] as Lane[]).map((value) => {
+            {(['planned', 'done'] as Lane[]).map((value) => {
               const selected = lane === value;
 
               return (
@@ -670,7 +670,7 @@ export function BlockEditorModal({
                     })}
                     {row.length < 2 ? <View style={styles.categoryChipSpacer} /> : null}
                   </View>
-                  {lane === 'actual' && selectedCategoryId && selectedCategoryRowIndex === rowIndex ? (
+                  {lane === 'done' && selectedCategoryId && selectedCategoryRowIndex === rowIndex ? (
                     <View style={styles.inlineLinkSection}>
                       <View style={styles.inlineLinkHeader}>
                         <Text style={styles.label}>Counts toward</Text>
@@ -717,7 +717,7 @@ export function BlockEditorModal({
                 </React.Fragment>
               ))}
             </View>
-            {lane === 'actual' && !selectedCategoryId ? (
+            {lane === 'done' && !selectedCategoryId ? (
               <View style={styles.inlineLinkSection}>
                 <View style={styles.inlineLinkHeader}>
                   <Text style={styles.label}>Counts toward</Text>

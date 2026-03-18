@@ -4,7 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
-import { UI_COLORS, getCategoryColor, getCategoryTint } from '@/src/constants/uiTheme';
+import { UI_COLORS, getCategoryColor, getCategoryLabel, getCategoryTint } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
 import { formatMinutesAmPm } from '@/src/utils/time';
 
@@ -36,6 +36,7 @@ type BlockProps = {
   copyCheckboxChecked?: boolean;
   onCopyCheckboxPress?: (id: string) => void;
   categoryColorMap?: Record<string, string>;
+  categoryLabelMap?: Record<string, string>;
   interactive?: boolean;
   dimmed?: boolean;
   pixelsPerMinute?: number;
@@ -63,6 +64,7 @@ export function Block({
   copyCheckboxChecked = false,
   onCopyCheckboxPress,
   categoryColorMap,
+  categoryLabelMap,
   interactive = true,
   dimmed = false,
   pixelsPerMinute = PIXELS_PER_MINUTE,
@@ -79,6 +81,7 @@ export function Block({
   const overrideColor = primaryTag ? categoryColorMap?.[primaryTag.toLowerCase()] : undefined;
   const categoryColor = overrideColor ?? getCategoryColor(primaryTag);
   const tintedFill = getCategoryTint(primaryTag);
+  const categoryLabel = getCategoryLabel(primaryTag, categoryLabelMap);
 
   const dragDeltaMin = useSharedValue(0);
   const isDragging = useSharedValue(false);
@@ -196,7 +199,7 @@ export function Block({
           <Ionicons
             name={copyCheckboxChecked ? 'checkmark-circle' : 'ellipse-outline'}
             size={16}
-            color={copyCheckboxChecked ? UI_COLORS.actual : UI_COLORS.neutralTextSoft}
+            color={copyCheckboxChecked ? UI_COLORS.done : UI_COLORS.neutralTextSoft}
           />
         </Animated.View>
       ) : null}
@@ -206,7 +209,7 @@ export function Block({
             {title}
           </Text>
           <Text numberOfLines={1} style={styles.tag}>
-            {primaryTag ?? 'uncategorized'}
+            {categoryLabel}
           </Text>
           <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
             {formatMinutesAmPm(shownStartMin)}-{formatMinutesAmPm(shownEndMin)}

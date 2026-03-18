@@ -96,8 +96,13 @@ export function getCategoryBorder(tag?: string): string {
   return withAlpha(getCategoryColor(tag), '55');
 }
 
-export function getCategoryLabel(tag?: string): string {
+export function getCategoryLabel(tag?: string, categoryLabelMap?: Record<string, string>): string {
   const normalized = tag?.trim().toLowerCase() ?? 'uncategorized';
+
+  const configuredLabel = categoryLabelMap?.[normalized]?.trim();
+  if (configuredLabel) {
+    return configuredLabel;
+  }
 
   if (normalized === 'work') {
     return 'Work';
