@@ -1,6 +1,6 @@
 # App Store Submission Checklist Status
 
-Last updated: February 26, 2026
+Last updated: March 18, 2026
 
 ## Legend
 - COMPLETE: Implemented in this repository or confirmed in app behavior.
@@ -14,11 +14,11 @@ Last updated: February 26, 2026
 - COMPLETE: Main interactive buttons have handlers.
 
 ## 2) Legal pages (public URLs)
-- COMPLETE: Privacy Policy exists in [legal/privacy-policy.md](/Users/jacob/Development/plan-vs-actual/legal/privacy-policy.md).
-- COMPLETE: Terms of Service exists in [legal/terms-of-service.md](/Users/jacob/Development/plan-vs-actual/legal/terms-of-service.md).
+- COMPLETE: Privacy Policy exists in [legal/privacy-policy.md](../../legal/privacy-policy.md).
+- COMPLETE: Terms of Service exists in [legal/terms-of-service.md](../../legal/terms-of-service.md).
 - COMPLETE: Legal pages are linked in-app via Settings -> Legal & Support.
 - MANUAL: Add Privacy Policy public URL in App Store Connect.
-- COMPLETE: Support page exists in [legal/support.md](/Users/jacob/Development/plan-vs-actual/legal/support.md).
+- COMPLETE: Support page exists in [legal/support.md](../../legal/support.md).
 - COMPLETE: Support email is configured to `jacobchin.builds@gmail.com` in app and legal docs.
 - COMPLETE: Privacy policy describes data collection, storage, and deletion.
 
@@ -73,7 +73,7 @@ Last updated: February 26, 2026
 - N/A: No AI/LLM features in current app version.
 
 ## 13) Reviewer access
-- COMPLETE: [review-notes template](/Users/jacob/Development/plan-vs-actual/docs/app-store/review-notes-template.md) includes short literal 3-step instructions.
+- COMPLETE: [review-notes template](./review-notes-template.md) includes short literal 3-step instructions.
 - N/A: Test account not needed without auth.
 - MANUAL: Add optional short recording link if desired.
 - COMPLETE: No special hardware/location constraints.

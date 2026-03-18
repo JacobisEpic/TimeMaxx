@@ -19,7 +19,7 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     summary: 'How data is stored, used, and deleted.',
     publicUrl: RELEASE_METADATA.legalPublicUrls.privacy,
     sections: [
-      'Plan vs Actual stores your time blocks and settings locally on your device.',
+      'TimeMaxx stores your time blocks and settings locally on your device.',
       'The app does not require account creation, and it does not send your timeline data to our servers.',
       'If you choose to share a summary, the exported text is generated on-device and shared only through the destination you pick.',
       'You can delete your data at any time from Settings by using "Reset all data."',
@@ -32,7 +32,7 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     summary: 'Basic usage terms and limitations.',
     publicUrl: RELEASE_METADATA.legalPublicUrls.terms,
     sections: [
-      'Plan vs Actual is provided as-is for personal productivity tracking.',
+      'TimeMaxx is provided as-is for personal productivity tracking.',
       'You are responsible for your own use of the app and any decisions made from its data.',
       'You may not attempt to reverse engineer, abuse, or interfere with normal app operation.',
       'The app may change over time, including features and availability.',

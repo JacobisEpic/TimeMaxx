@@ -3,7 +3,9 @@ import * as SQLite from 'expo-sqlite';
 import type { Block, BlockRepeatPreset, Lane } from '@/src/types/blocks';
 import { normalizeRepeatRule } from '@/src/utils/recurrence';
 
-const DB_NAME = 'plan-vs-actual.db';
+const DB_NAME = 'timemaxx.db';
+// Preserve existing user data after the app rename.
+const LEGACY_DB_NAME = 'plan-vs-actual.db';
 const SCHEMA_VERSION = '4';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -60,6 +62,10 @@ type BlockRow = {
   recurrenceId: string | null;
   recurrenceIndex: number | null;
   recurrenceRuleJson: string | null;
+};
+
+type StoredBlockRow = BlockRow & {
+  updatedAt: number;
 };
 
 function parseRepeatPreset(value: unknown): BlockRepeatPreset {
@@ -141,6 +147,120 @@ function mapRowToBlock(row: BlockRow): Block | null {
   };
 }
 
+async function ensureSchema(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS blocks (
+      id TEXT PRIMARY KEY,
+      dayKey TEXT NOT NULL,
+      lane TEXT NOT NULL,
+      startMin INTEGER NOT NULL,
+      endMin INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      tagsJson TEXT NOT NULL,
+      linkedPlannedId TEXT NULL,
+      recurrenceId TEXT NULL,
+      recurrenceIndex INTEGER NULL,
+      recurrenceRuleJson TEXT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_blocks_day_lane_start
+      ON blocks(dayKey, lane, startMin);
+
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(blocks);');
+  const hasLinkedPlannedId = columns.some((column) => column.name === 'linkedPlannedId');
+  const hasRecurrenceId = columns.some((column) => column.name === 'recurrenceId');
+  const hasRecurrenceIndex = columns.some((column) => column.name === 'recurrenceIndex');
+  const hasRecurrenceRuleJson = columns.some((column) => column.name === 'recurrenceRuleJson');
+
+  if (!hasLinkedPlannedId) {
+    await db.execAsync('ALTER TABLE blocks ADD COLUMN linkedPlannedId TEXT NULL;');
+  }
+  if (!hasRecurrenceId) {
+    await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceId TEXT NULL;');
+  }
+  if (!hasRecurrenceIndex) {
+    await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceIndex INTEGER NULL;');
+  }
+  if (!hasRecurrenceRuleJson) {
+    await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceRuleJson TEXT NULL;');
+  }
+}
+
+async function getBlockCount(db: SQLite.SQLiteDatabase): Promise<number> {
+  const rows = await db.getAllAsync<{ count: number }>('SELECT COUNT(*) as count FROM blocks;');
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function migrateLegacyDatabaseIfNeeded(db: SQLite.SQLiteDatabase): Promise<void> {
+  const currentBlockCount = await getBlockCount(db);
+  if (currentBlockCount > 0) {
+    return;
+  }
+
+  const legacyDb = await SQLite.openDatabaseAsync(LEGACY_DB_NAME);
+  let shouldDeleteLegacy = false;
+
+  try {
+    await ensureSchema(legacyDb);
+
+    const legacyBlockCount = await getBlockCount(legacyDb);
+    if (legacyBlockCount === 0) {
+      shouldDeleteLegacy = true;
+      return;
+    }
+
+    const legacyRows = await legacyDb.getAllAsync<StoredBlockRow>(
+      `SELECT id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt
+       FROM blocks
+       ORDER BY dayKey ASC, lane ASC, startMin ASC, id ASC;`
+    );
+
+    await db.execAsync('BEGIN IMMEDIATE TRANSACTION;');
+    try {
+      for (const row of legacyRows) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO blocks (id, dayKey, lane, startMin, endMin, title, tagsJson, linkedPlannedId, recurrenceId, recurrenceIndex, recurrenceRuleJson, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          row.id,
+          row.dayKey,
+          row.lane,
+          row.startMin,
+          row.endMin,
+          row.title,
+          row.tagsJson,
+          row.linkedPlannedId,
+          row.recurrenceId,
+          row.recurrenceIndex,
+          row.recurrenceRuleJson,
+          Number.isFinite(row.updatedAt) ? row.updatedAt : Date.now()
+        );
+      }
+      await db.execAsync('COMMIT;');
+      shouldDeleteLegacy = true;
+    } catch (error) {
+      await db.execAsync('ROLLBACK;');
+      throw error;
+    }
+  } finally {
+    await legacyDb.closeAsync();
+
+    if (shouldDeleteLegacy) {
+      try {
+        await SQLite.deleteDatabaseAsync(LEGACY_DB_NAME);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+  }
+}
+
 export async function initDb(): Promise<void> {
   if (initPromise) {
     await initPromise;
@@ -149,50 +269,8 @@ export async function initDb(): Promise<void> {
 
   initPromise = (async () => {
     const db = await getDb();
-
-    await db.execAsync(`
-      CREATE TABLE IF NOT EXISTS blocks (
-        id TEXT PRIMARY KEY,
-        dayKey TEXT NOT NULL,
-        lane TEXT NOT NULL,
-        startMin INTEGER NOT NULL,
-        endMin INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        tagsJson TEXT NOT NULL,
-        linkedPlannedId TEXT NULL,
-        recurrenceId TEXT NULL,
-        recurrenceIndex INTEGER NULL,
-        recurrenceRuleJson TEXT NULL,
-        updatedAt INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_blocks_day_lane_start
-        ON blocks(dayKey, lane, startMin);
-
-      CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-    `);
-
-    const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(blocks);');
-    const hasLinkedPlannedId = columns.some((column) => column.name === 'linkedPlannedId');
-    const hasRecurrenceId = columns.some((column) => column.name === 'recurrenceId');
-    const hasRecurrenceIndex = columns.some((column) => column.name === 'recurrenceIndex');
-    const hasRecurrenceRuleJson = columns.some((column) => column.name === 'recurrenceRuleJson');
-
-    if (!hasLinkedPlannedId) {
-      await db.execAsync('ALTER TABLE blocks ADD COLUMN linkedPlannedId TEXT NULL;');
-    }
-    if (!hasRecurrenceId) {
-      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceId TEXT NULL;');
-    }
-    if (!hasRecurrenceIndex) {
-      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceIndex INTEGER NULL;');
-    }
-    if (!hasRecurrenceRuleJson) {
-      await db.execAsync('ALTER TABLE blocks ADD COLUMN recurrenceRuleJson TEXT NULL;');
-    }
+    await ensureSchema(db);
+    await migrateLegacyDatabaseIfNeeded(db);
 
     await db.runAsync(
       'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);',

@@ -1,4 +1,4 @@
-# Plan vs Actual
+# TimeMaxx
 
 Local-first timeline tracking app built with Expo and React Native.
 
@@ -22,11 +22,11 @@ npm run release:check
 ```
 
 ## App Store Readiness Files
-- Checklist status: [docs/app-store/submission-checklist.md](/Users/jacob/Development/plan-vs-actual/docs/app-store/submission-checklist.md)
-- Review notes template: [docs/app-store/review-notes-template.md](/Users/jacob/Development/plan-vs-actual/docs/app-store/review-notes-template.md)
-- Privacy policy: [legal/privacy-policy.md](/Users/jacob/Development/plan-vs-actual/legal/privacy-policy.md)
-- Terms: [legal/terms-of-service.md](/Users/jacob/Development/plan-vs-actual/legal/terms-of-service.md)
-- Support: [legal/support.md](/Users/jacob/Development/plan-vs-actual/legal/support.md)
+- Checklist status: [docs/app-store/submission-checklist.md](docs/app-store/submission-checklist.md)
+- Review notes template: [docs/app-store/review-notes-template.md](docs/app-store/review-notes-template.md)
+- Privacy policy: [legal/privacy-policy.md](legal/privacy-policy.md)
+- Terms: [legal/terms-of-service.md](legal/terms-of-service.md)
+- Support: [legal/support.md](legal/support.md)
 
 ## Required Manual Steps Before Submission
 1. Verify the configured support inbox (`jacobchin.builds@gmail.com`) is monitored.

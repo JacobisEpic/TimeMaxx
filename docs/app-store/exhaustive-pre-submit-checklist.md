@@ -1,8 +1,8 @@
 # Exhaustive App Store Pre-Submit Checklist (iOS)
 
-Last updated: March 12, 2026 (America/New_York)
+Last updated: March 18, 2026 (America/New_York)
 
-Use this list right before shipping `Plan vs Actual` to the App Store.
+Use this list right before shipping `TimeMaxx` to the App Store.
 
 ## 0) Release freeze and branch hygiene
 
@@ -29,8 +29,8 @@ Use this list right before shipping `Plan vs Actual` to the App Store.
 
 ## 3) App identity, versioning, signing
 
-- [ ] Bundle ID is correct: `com.planvsactual.app`.
-- [ ] Display name is correct: `Plan vs Actual`.
+- [ ] Bundle ID is correct: `com.timemaxx.app`.
+- [ ] Display name is correct: `TimeMaxx`.
 - [ ] Marketing version (`CFBundleShortVersionString`) is set for this release.
 - [ ] Build number (`CFBundleVersion`) incremented from prior upload.
 - [ ] Automatic signing works with the correct Apple team.
@@ -129,9 +129,9 @@ Use this list right before shipping `Plan vs Actual` to the App Store.
 
 - [ ] `app.json` version and iOS bundle identifier are correct.
 - [ ] `src/constants/releaseMetadata.ts` URLs are production-ready:
-  - [ ] `https://planvsactual.app/privacy-policy`
-  - [ ] `https://planvsactual.app/terms-of-service`
-  - [ ] `https://planvsactual.app/support`
+  - [ ] `https://timemaxx.app/privacy-policy`
+  - [ ] `https://timemaxx.app/terms-of-service`
+  - [ ] `https://timemaxx.app/support`
 - [ ] Existing docs are current:
   - [ ] `docs/app-store/submission-checklist.md`
   - [ ] `docs/app-store/review-notes-template.md`
@@ -142,4 +142,3 @@ Use this list right before shipping `Plan vs Actual` to the App Store.
 - [ ] Run one TestFlight internal round before App Review.
 - [ ] Keep a rollback fix branch ready (`hotfix/*`) in case of rejection issues.
 - [ ] Prepare canned review-response templates for common rejection categories.
-

@@ -74,8 +74,11 @@ type ParsedSummaryBlock = {
   endMin: number;
 };
 
-const FULL_BACKUP_SCHEMA = 'plan-vs-actual.backup.v1';
-const DAY_BACKUP_SCHEMA = 'plan-vs-actual.day-backup.v1';
+const FULL_BACKUP_SCHEMA = 'timemaxx.backup.v1';
+const DAY_BACKUP_SCHEMA = 'timemaxx.day-backup.v1';
+// Accept backups exported before the TimeMaxx rename.
+const LEGACY_FULL_BACKUP_SCHEMAS = ['plan-vs-actual.backup.v1'] as const;
+const LEGACY_DAY_BACKUP_SCHEMAS = ['plan-vs-actual.day-backup.v1'] as const;
 const PROTECTED_CATEGORIES: AppSettings['categories'] = [
   { id: 'break', label: 'Break', color: '#F59E0B' },
   { id: 'other', label: 'None', color: '#9CA3AF' },
@@ -295,7 +298,10 @@ function parseFullBackupInput(input: string, fallbackSettings: AppSettings): Par
       return null;
     }
 
-    if (parsed.schema !== FULL_BACKUP_SCHEMA) {
+    if (
+      parsed.schema !== FULL_BACKUP_SCHEMA &&
+      !LEGACY_FULL_BACKUP_SCHEMAS.includes(parsed.schema as (typeof LEGACY_FULL_BACKUP_SCHEMAS)[number])
+    ) {
       return null;
     }
 
@@ -346,7 +352,10 @@ function parseDayBackupInput(input: string): ParsedDayBackupInput | null {
       return null;
     }
 
-    if (parsed.schema !== DAY_BACKUP_SCHEMA) {
+    if (
+      parsed.schema !== DAY_BACKUP_SCHEMA &&
+      !LEGACY_DAY_BACKUP_SCHEMAS.includes(parsed.schema as (typeof LEGACY_DAY_BACKUP_SCHEMAS)[number])
+    ) {
       return null;
     }
 
@@ -929,7 +938,7 @@ export default function SettingsScreen() {
 
         await Share.share({
           message: JSON.stringify(payload, null, 2),
-          title: 'Plan vs Actual Full Backup',
+          title: 'TimeMaxx Full Backup',
         });
       } catch {
         Alert.alert('Export error', 'Could not export all data.');
@@ -949,7 +958,7 @@ export default function SettingsScreen() {
 
     await Share.share({
       message: JSON.stringify(payload, null, 2),
-      title: `Plan vs Actual Day Backup (${dayKey})`,
+      title: `TimeMaxx Day Backup (${dayKey})`,
     });
   }, []);
 
@@ -1441,7 +1450,7 @@ export default function SettingsScreen() {
 
   const openSupportEmail = () => {
     void (async () => {
-      const subject = encodeURIComponent('Plan vs Actual Support');
+      const subject = encodeURIComponent('TimeMaxx Support');
       const url = `mailto:${SUPPORT_EMAIL}?subject=${subject}`;
 
       try {

@@ -1,22 +1,28 @@
 {
   "expo": {
-    "name": "Plan vs Actual",
-    "slug": "plan-vs-actual",
+    "name": "TimeMaxx",
+    "slug": "timemaxx",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "planvsactual",
+    "scheme": "timemaxx",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.planvsactual.app"
+      "bundleIdentifier": "com.timemaxx.app"
     },
     "android": {
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      }
     },
     "web": {
-      "output": "static"
+      "output": "static",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",

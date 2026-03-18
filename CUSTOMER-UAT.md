@@ -1,6 +1,6 @@
-# Plan vs Done
+# TimeMaxx
 
-Plan vs Done is a daily planning app that helps you compare what you intended to do with what you actually did.
+TimeMaxx is a daily planning app that helps you compare what you intended to do with what you actually did.
 
 No account is required. Your timeline data stays on your device.
 

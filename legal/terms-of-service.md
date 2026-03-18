@@ -1,9 +1,9 @@
 # Terms of Service
 
-Last updated: February 25, 2026
+Last updated: March 18, 2026
 
 ## Acceptance
-By using Plan vs Actual, you agree to these terms.
+By using TimeMaxx, you agree to these terms.
 
 ## License
 We grant a limited, non-exclusive, revocable license to use the app for personal or internal productivity purposes.

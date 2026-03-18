@@ -1,9 +1,9 @@
 # Privacy Policy
 
-Last updated: February 25, 2026
+Last updated: March 18, 2026
 
 ## Overview
-Plan vs Actual is a local-first productivity app for tracking planned and completed time blocks.
+TimeMaxx is a local-first productivity app for tracking planned and completed time blocks.
 
 ## Data We Collect
 - Timeline blocks you create (title, category, start/end times)

@@ -639,13 +639,6 @@ export default function DayTimeline() {
       })),
     [plannedBlocks]
   );
-  const editingBlock = useMemo(
-    () =>
-      editorState.mode === 'edit' && editorState.blockId
-        ? sortedBlocks.find((block) => block.id === editorState.blockId) ?? null
-        : null,
-    [editorState.blockId, editorState.mode, sortedBlocks]
-  );
   const categoryOptions = settings.categories;
   const visibleCategoryIdSet = useMemo(
     () => new Set(settings.visibleCategoryIds.map((id) => id.toLowerCase())),
@@ -2022,7 +2015,7 @@ export default function DayTimeline() {
 
             if (!shouldRebuildSeries) {
               const dayBlocksCache = new Map<string, TimeBlock[]>();
-              const updates: Array<{ dayKey: string; block: TimeBlock }> = [];
+              const updates: { dayKey: string; block: TimeBlock }[] = [];
               const nextRecurrenceId = scope === 'following' ? createRecurrenceId() : existing.recurrenceId;
               const repeatRule = existing.repeatRule ?? null;
 
@@ -2341,25 +2334,7 @@ export default function DayTimeline() {
 
     const ignoreId = editorState.mode === 'edit' ? editorState.blockId : null;
     return hasOverlap(editorState.lane, ignoreId, startMin, endMin, sortedBlocks);
-  }, [
-    dayKey,
-    editorState.blockId,
-    editorState.endText,
-    editorState.lane,
-    editorState.mode,
-    editorState.repeatEndMode,
-    editorState.repeatIntervalText,
-    editorState.isRecurringSource,
-    editorState.repeatMonthlyMode,
-    editorState.repeatOccurrenceCountText,
-    editorState.repeatPreset,
-    editorState.repeatWeekDays,
-    editorState.repeatUntilDayKey,
-    editorState.startText,
-    editorState.tags.length,
-    editorState.title,
-    sortedBlocks,
-  ]);
+  }, [dayKey, editorState, sortedBlocks]);
 
   const showInsightsInfo = useCallback((section: 'execution' | 'totals' | 'categories') => {
     if (section === 'execution') {
@@ -2814,7 +2789,7 @@ export default function DayTimeline() {
         },
       ]}>
       <View style={styles.topHeaderRow}>
-        <Text style={styles.appTitle}>Plan vs Done</Text>
+        <Text style={styles.appTitle}>TimeMaxx</Text>
         <View style={styles.topActions}>
           <Pressable
             accessibilityLabel="Open daily insights"
