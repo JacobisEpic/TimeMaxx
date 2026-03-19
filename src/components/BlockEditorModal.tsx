@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
+import { UI_RADIUS, UI_TYPE, type UIColors, useUIColors } from '@/src/constants/uiTheme';
 import { DEFAULT_CATEGORIES } from '@/src/context/AppSettingsContext';
 import type {
   BlockMonthlyRepeatMode,
@@ -276,6 +276,8 @@ export function BlockEditorModal({
   onCopyToDone,
 }: BlockEditorModalProps) {
   const insets = useSafeAreaInsets();
+  const colors = useUIColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [repeatPickerVisible, setRepeatPickerVisible] = useState(false);
@@ -304,8 +306,8 @@ export function BlockEditorModal({
     return selectedTags.filter((tag) => !knownIds.has(tag));
   }, [resolvedCategoryOptions, selectedTags]);
   const categoryRenderOptions = useMemo(
-    () => [...resolvedCategoryOptions, ...unknownTags.map((tag) => ({ label: tag, id: tag, color: '#94A3B8' }))],
-    [resolvedCategoryOptions, unknownTags]
+    () => [...resolvedCategoryOptions, ...unknownTags.map((tag) => ({ label: tag, id: tag, color: colors.neutralTextSoft }))],
+    [colors.neutralTextSoft, resolvedCategoryOptions, unknownTags]
   );
   const selectedCategoryId = selectedTags[0]?.toLowerCase() ?? null;
   const selectedCategoryLabel =
@@ -448,7 +450,7 @@ export function BlockEditorModal({
           <View style={styles.headerRow}>
             <Text style={styles.headerText}>{mode === 'create' ? 'Add Time Block' : 'Edit Time Block'}</Text>
             <Pressable accessibilityLabel="Close editor" style={styles.closeButton} onPress={onCancel}>
-              <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+              <Ionicons name="close" size={18} color={colors.neutralText} />
             </Pressable>
           </View>
           <View style={styles.headerLaneRow}>
@@ -482,7 +484,7 @@ export function BlockEditorModal({
               placeholder="What are you working on?"
               style={styles.input}
               accessibilityLabel="Block title"
-              placeholderTextColor={UI_COLORS.neutralTextSoft}
+              placeholderTextColor={colors.neutralTextSoft}
               {...DONE_TEXT_INPUT_PROPS}
               onSubmitEditing={dismissKeyboardOnSubmit}
             />
@@ -493,7 +495,7 @@ export function BlockEditorModal({
                 <View style={styles.startControlGroup}>
                   <Pressable style={styles.dropdown} onPress={() => setPickerType('startTime')}>
                     <Text style={styles.dropdownText}>{toTimeLabel(selectedHour, selectedMinute)}</Text>
-                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                    <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                   </Pressable>
                 </View>
               </View>
@@ -502,7 +504,7 @@ export function BlockEditorModal({
                 <View style={styles.startControlGroup}>
                   <Pressable style={styles.dropdown} onPress={() => setPickerType('endTime')}>
                     <Text style={styles.dropdownText}>{toTimeLabel(selectedEndHour, selectedEndMinute)}</Text>
-                    <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                    <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                   </Pressable>
                 </View>
               </View>
@@ -516,7 +518,7 @@ export function BlockEditorModal({
                   style={styles.dropdown}
                   onPress={() => setRepeatPickerVisible(true)}>
                   <Text style={styles.dropdownText}>{repeatLabel}</Text>
-                  <Ionicons name="chevron-down" size={14} color={UI_COLORS.neutralTextSoft} />
+                  <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                 </Pressable>
                 {repeatPreset !== 'none' ? (
                   <View style={styles.repeatDetailsWrap}>
@@ -531,7 +533,7 @@ export function BlockEditorModal({
                             style={[styles.input, styles.repeatNumberInput]}
                             keyboardType="number-pad"
                             accessibilityLabel="Repeat interval"
-                            placeholderTextColor={UI_COLORS.neutralTextSoft}
+                            placeholderTextColor={colors.neutralTextSoft}
                             {...DONE_TEXT_INPUT_PROPS}
                             onSubmitEditing={dismissKeyboardOnSubmit}
                           />
@@ -615,7 +617,7 @@ export function BlockEditorModal({
                             <Text style={styles.dropdownText}>{repeatUntilLabel}</Text>
                             <Text style={styles.repeatHintText}>Tap to choose</Text>
                           </View>
-                          <Ionicons name="calendar-outline" size={16} color={UI_COLORS.neutralTextSoft} />
+                          <Ionicons name="calendar-outline" size={16} color={colors.neutralTextSoft} />
                         </Pressable>
                       </View>
                     ) : null}
@@ -630,7 +632,7 @@ export function BlockEditorModal({
                           style={[styles.input, styles.repeatNumberInput]}
                           keyboardType="number-pad"
                           accessibilityLabel="Repeat occurrence count"
-                          placeholderTextColor={UI_COLORS.neutralTextSoft}
+                          placeholderTextColor={colors.neutralTextSoft}
                           {...DONE_TEXT_INPUT_PROPS}
                           onSubmitEditing={dismissKeyboardOnSubmit}
                         />
@@ -706,7 +708,7 @@ export function BlockEditorModal({
                               <Ionicons
                                 name={selected ? 'checkmark-circle' : 'ellipse-outline'}
                                 size={18}
-                                color={selected ? UI_COLORS.planned : UI_COLORS.neutralTextSoft}
+                                color={selected ? colors.planned : colors.neutralTextSoft}
                               />
                             </Pressable>
                           );
@@ -810,7 +812,7 @@ export function BlockEditorModal({
                     (current) => new Date(current.getFullYear(), current.getMonth() - 1, 1)
                   )
                 }>
-                <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+                <Ionicons name="chevron-back" size={16} color={colors.neutralText} />
               </Pressable>
               <Text style={styles.pickerTitle}>{repeatCalendarMonthLabel}</Text>
               <Pressable
@@ -821,7 +823,7 @@ export function BlockEditorModal({
                     (current) => new Date(current.getFullYear(), current.getMonth() + 1, 1)
                   )
                 }>
-                <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+                <Ionicons name="chevron-forward" size={16} color={colors.neutralText} />
               </Pressable>
             </View>
             <View style={styles.calendarWeekdayRow}>
@@ -993,10 +995,21 @@ export function BlockEditorModal({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: UIColors) {
+  const isDark = colors.appBackground === '#0B0D11';
+  const theme = {
+    cardShadow: isDark ? '#000000' : '#111827',
+    destructiveBackground: isDark ? '#3F1D1D' : '#FEE2E2',
+    destructiveText: isDark ? '#FCA5A5' : '#991B1B',
+    primaryButtonBackground: colors.neutralText,
+    primaryButtonDisabled: isDark ? '#374151' : '#C7CDD6',
+    onPrimaryText: isDark ? '#0B0D11' : '#FFFFFF',
+  };
+
+  return StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: UI_COLORS.overlay,
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   dismissLayer: {
@@ -1004,26 +1017,26 @@ const styles = StyleSheet.create({
   },
   card: {
     height: SHEET_VISIBLE_HEIGHT,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
     borderTopRightRadius: UI_RADIUS.sheet,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 18,
-    shadowColor: '#111827',
+    shadowColor: theme.cardShadow,
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.12,
     shadowRadius: 14,
     elevation: 10,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   grabber: {
     alignSelf: 'center',
     width: 44,
     height: 5,
     borderRadius: 3,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: colors.neutralBorder,
     marginBottom: 10,
   },
   headerRow: {
@@ -1039,26 +1052,26 @@ const styles = StyleSheet.create({
   },
   headerLaneChip: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
   },
   headerLaneChipSelected: {
-    backgroundColor: UI_COLORS.surface,
-    borderColor: UI_COLORS.neutralText,
+    backgroundColor: colors.surface,
+    borderColor: colors.neutralText,
   },
   headerLaneChipText: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '600',
   },
   headerLaneChipTextSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   headerText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: UI_TYPE.section,
     fontWeight: '800',
   },
@@ -1066,9 +1079,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1078,18 +1091,18 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: UI_TYPE.body,
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontWeight: '600',
   },
   input: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surface,
+    color: colors.neutralText,
+    backgroundColor: colors.surface,
   },
   categoryGrid: {
     flexDirection: 'column',
@@ -1102,29 +1115,29 @@ const styles = StyleSheet.create({
   categoryChip: {
     flex: 1,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingVertical: 10,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   categoryChipSelected: {
-    borderColor: UI_COLORS.neutralText,
-    backgroundColor: '#F9FAFB',
+    borderColor: colors.neutralText,
+    backgroundColor: colors.surfaceMuted,
   },
   categoryChipSpacer: {
     flex: 1,
   },
   categoryChipText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '600',
   },
   categoryChipTextSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   categoryDot: {
     width: 8,
@@ -1157,7 +1170,7 @@ const styles = StyleSheet.create({
     width: 88,
   },
   repeatInlineLabel: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1175,22 +1188,22 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   weekdayChipSelected: {
-    borderColor: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: colors.neutralText,
+    backgroundColor: colors.surfaceMuted,
   },
   weekdayChipText: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '700',
   },
   weekdayChipTextSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   modeChipRow: {
     flexDirection: 'row',
@@ -1199,26 +1212,26 @@ const styles = StyleSheet.create({
   },
   modeChip: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   modeChipSelected: {
-    borderColor: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: colors.neutralText,
+    backgroundColor: colors.surfaceMuted,
   },
   modeChipText: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '600',
   },
   modeChipTextSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   repeatHintText: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: UI_TYPE.caption,
   },
   startControlGroup: {
@@ -1229,22 +1242,22 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 42,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   dropdownText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '600',
   },
   errorText: {
     minHeight: 18,
-    color: '#B91C1C',
+    color: theme.destructiveText,
     fontSize: UI_TYPE.caption,
   },
   linkSection: {
@@ -1255,10 +1268,10 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 2,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     padding: 10,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   inlineLinkHeader: {
     flexDirection: 'row',
@@ -1266,69 +1279,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   inlineLinkBrowse: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '600',
   },
   inlineLinkOption: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
   inlineLinkOptionSelected: {
-    borderColor: UI_COLORS.planned,
-    backgroundColor: UI_COLORS.plannedTint,
+    borderColor: colors.planned,
+    backgroundColor: colors.plannedTint,
   },
   inlineLinkCopy: {
     flex: 1,
     gap: 1,
   },
   inlineLinkTitle: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '600',
   },
   inlineLinkTitleSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   inlineLinkTime: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 11,
     fontWeight: '500',
   },
   inlineLinkEmpty: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
   },
   linkRow: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
   linkRowDisabled: {
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
   },
   linkRowText: {
     flex: 1,
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
   },
   linkRowTextDisabled: {
-    color: '#94A3B8',
+    color: colors.neutralTextSoft,
   },
   footerRow: {
     flexDirection: 'row',
@@ -1336,8 +1349,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
+    borderTopColor: colors.neutralBorder,
+    backgroundColor: colors.surface,
   },
   secondaryButton: {
     borderRadius: UI_RADIUS.control,
@@ -1345,38 +1358,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   deleteButton: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: theme.destructiveBackground,
   },
   deleteButtonText: {
-    color: '#991B1B',
+    color: theme.destructiveText,
     fontWeight: '700',
   },
   copyButton: {
-    backgroundColor: UI_COLORS.plannedTint,
-    borderColor: UI_COLORS.planned,
+    backgroundColor: colors.plannedTint,
+    borderColor: colors.planned,
   },
   copyButtonText: {
-    color: UI_COLORS.planned,
+    color: colors.planned,
     fontWeight: '700',
   },
   primaryButton: {
     flex: 1,
     minHeight: 46,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: 'rgba(17, 24, 39, 0.9)',
+    backgroundColor: theme.primaryButtonBackground,
     alignItems: 'center',
     justifyContent: 'center',
   },
   primaryButtonDisabled: {
-    backgroundColor: '#C7CDD6',
+    backgroundColor: theme.primaryButtonDisabled,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimaryText,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1384,32 +1397,32 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 16,
-    backgroundColor: UI_COLORS.overlay,
+    backgroundColor: colors.overlay,
   },
   pickerDismissLayer: {
     ...StyleSheet.absoluteFillObject,
   },
   pickerCard: {
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     borderRadius: UI_RADIUS.card,
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 6,
     maxHeight: '70%',
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   calendarCard: {
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     borderRadius: UI_RADIUS.card,
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   pickerTitle: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 2,
@@ -1424,8 +1437,8 @@ const styles = StyleSheet.create({
     height: 30,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: colors.neutralBorder,
+    backgroundColor: colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1436,7 +1449,7 @@ const styles = StyleSheet.create({
   calendarWeekdayText: {
     width: `${100 / 7}%`,
     textAlign: 'center',
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1455,33 +1468,33 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    backgroundColor: UI_COLORS.glassSurface,
+    borderColor: colors.glassStroke,
+    backgroundColor: colors.glassSurface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   calendarDayCardMuted: {
-    borderColor: UI_COLORS.glassStrokeSoft,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: colors.glassStrokeSoft,
+    backgroundColor: colors.surfaceMuted,
   },
   calendarDayCardSelected: {
-    borderColor: UI_COLORS.accent,
-    backgroundColor: UI_COLORS.accentTint,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentTint,
   },
   calendarDayCardToday: {
     borderWidth: 1.5,
-    borderColor: UI_COLORS.accent,
+    borderColor: colors.accent,
   },
   calendarDayText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 12,
     fontWeight: '800',
   },
   calendarDayTextMuted: {
-    color: '#94A3B8',
+    color: colors.neutralTextSoft,
   },
   calendarDayTextSelected: {
-    color: UI_COLORS.accent,
+    color: colors.accent,
     fontWeight: '700',
   },
   linkList: {
@@ -1507,40 +1520,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   pickerDoneText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontWeight: '600',
     fontSize: 13,
   },
   pickerRow: {
     borderRadius: UI_RADIUS.control,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     paddingHorizontal: 10,
     paddingVertical: 9,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     marginBottom: 6,
   },
   pickerRowSelected: {
-    borderColor: UI_COLORS.neutralText,
-    backgroundColor: '#F9FAFB',
+    borderColor: colors.neutralText,
+    backgroundColor: colors.surfaceMuted,
   },
   pickerRowTitle: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '600',
   },
   pickerRowTitleSelected: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   pickerRowTime: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: UI_TYPE.caption,
     marginTop: 1,
     fontVariant: ['tabular-nums'],
   },
-});
+  });
+}

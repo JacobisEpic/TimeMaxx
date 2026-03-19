@@ -1,3 +1,5 @@
+import { useColorScheme } from '@/hooks/use-color-scheme';
+
 export const UI_COLORS_LIGHT = {
   appBackground: '#F6F7F9',
   surface: '#FFFFFF',
@@ -45,6 +47,15 @@ export const UI_COLORS_DARK = {
 } as const;
 
 export const UI_COLORS = UI_COLORS_LIGHT;
+export type UIColors = Record<keyof typeof UI_COLORS_LIGHT, string>;
+
+export function getUIColors(colorScheme?: 'light' | 'dark' | null): UIColors {
+  return colorScheme === 'dark' ? UI_COLORS_DARK : UI_COLORS_LIGHT;
+}
+
+export function useUIColors(): UIColors {
+  return getUIColors(useColorScheme());
+}
 
 export const UI_RADIUS = {
   sheet: 22,

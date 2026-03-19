@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { UI_COLORS, UI_RADIUS } from '@/src/constants/uiTheme';
+import { UI_RADIUS, type UIColors, useUIColors } from '@/src/constants/uiTheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import { getBlocksForDayRange } from '@/src/storage/blocksDb';
 import type { Block } from '@/src/types/blocks';
@@ -76,9 +76,11 @@ function buildCalendarCells(displayMonth: Date): CalendarCell[] {
 export default function MonthView() {
   const router = useRouter();
   const { dataVersion } = useAppSettings();
+  const colors = useUIColors();
   const [displayMonth, setDisplayMonth] = useState(() => getMonthStart(new Date()));
   const [dayScores, setDayScores] = useState<Record<string, DayExecution>>({});
   const [loading, setLoading] = useState(false);
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const todayKey = getLocalDayKey();
   const monthLabel = useMemo(
@@ -144,7 +146,7 @@ export default function MonthView() {
           accessibilityLabel="Back to day view"
           style={styles.iconButton}
           onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={18} color={UI_COLORS.neutralText} />
+          <Ionicons name="arrow-back" size={18} color={colors.neutralText} />
         </Pressable>
       </View>
 
@@ -154,7 +156,7 @@ export default function MonthView() {
           accessibilityLabel="Previous month"
           style={styles.iconButton}
           onPress={() => setDisplayMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}>
-          <Ionicons name="chevron-back" size={18} color={UI_COLORS.neutralText} />
+          <Ionicons name="chevron-back" size={18} color={colors.neutralText} />
         </Pressable>
         <Text style={styles.monthLabel}>{monthLabel}</Text>
         <Pressable
@@ -162,7 +164,7 @@ export default function MonthView() {
           accessibilityLabel="Next month"
           style={styles.iconButton}
           onPress={() => setDisplayMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}>
-          <Ionicons name="chevron-forward" size={18} color={UI_COLORS.neutralText} />
+          <Ionicons name="chevron-forward" size={18} color={colors.neutralText} />
         </Pressable>
       </View>
 
@@ -210,116 +212,118 @@ export default function MonthView() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: UI_COLORS.appBackground,
-    paddingTop: 62,
-    paddingHorizontal: 16,
-  },
-  topHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  appTitle: {
-    color: UI_COLORS.neutralText,
-    fontSize: 21,
-    fontWeight: '900',
-  },
-  iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    backgroundColor: UI_COLORS.glassSurface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconButtonDisabled: {
-    opacity: 0.6,
-  },
-  monthHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  monthLabel: {
-    color: UI_COLORS.neutralText,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  calendarWrap: {
-    paddingBottom: 28,
-  },
-  weekdayRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  weekdayLabel: {
-    flex: 1,
-    textAlign: 'center',
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: '14.2857%',
-    aspectRatio: 1,
-    borderRadius: UI_RADIUS.card,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    backgroundColor: UI_COLORS.glassSurface,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  dayCellMuted: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-  },
-  dayCellFuture: {
-    backgroundColor: '#F8FAFC',
-  },
-  dayCellToday: {
-    borderColor: UI_COLORS.accent,
-    borderWidth: 2,
-  },
-  dayNumber: {
-    color: UI_COLORS.neutralText,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  dayNumberMuted: {
-    color: '#94A3B8',
-  },
-  scoreLabel: {
-    color: UI_COLORS.accent,
-    fontSize: 12,
-    fontWeight: '800',
-    fontVariant: ['tabular-nums'],
-  },
-  scoreLabelMuted: {
-    color: '#94A3B8',
-  },
-  legendRow: {
-    marginTop: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  legendText: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-});
+function createStyles(colors: UIColors) {
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.appBackground,
+      paddingTop: 62,
+      paddingHorizontal: 16,
+    },
+    topHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    appTitle: {
+      color: colors.neutralText,
+      fontSize: 21,
+      fontWeight: '900',
+    },
+    iconButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+      backgroundColor: colors.glassSurface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    iconButtonDisabled: {
+      opacity: 0.6,
+    },
+    monthHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+    },
+    monthLabel: {
+      color: colors.neutralText,
+      fontSize: 18,
+      fontWeight: '800',
+    },
+    calendarWrap: {
+      paddingBottom: 28,
+    },
+    weekdayRow: {
+      flexDirection: 'row',
+      marginBottom: 8,
+    },
+    weekdayLabel: {
+      flex: 1,
+      textAlign: 'center',
+      color: colors.neutralTextSoft,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    calendarGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    dayCell: {
+      width: '14.2857%',
+      aspectRatio: 1,
+      borderRadius: UI_RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+      backgroundColor: colors.glassSurface,
+      paddingVertical: 6,
+      paddingHorizontal: 4,
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+    },
+    dayCellMuted: {
+      backgroundColor: colors.surfaceMuted,
+      borderColor: colors.neutralBorder,
+    },
+    dayCellFuture: {
+      backgroundColor: colors.surfaceMuted,
+    },
+    dayCellToday: {
+      borderColor: colors.accent,
+      borderWidth: 2,
+    },
+    dayNumber: {
+      color: colors.neutralText,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    dayNumberMuted: {
+      color: colors.neutralTextSoft,
+    },
+    scoreLabel: {
+      color: colors.accent,
+      fontSize: 12,
+      fontWeight: '800',
+      fontVariant: ['tabular-nums'],
+    },
+    scoreLabelMuted: {
+      color: colors.neutralTextSoft,
+    },
+    legendRow: {
+      marginTop: 12,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    legendText: {
+      color: colors.neutralTextSoft,
+      fontSize: 11,
+      fontWeight: '600',
+    },
+  });
+}

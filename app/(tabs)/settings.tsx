@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { APP_WEBSITE_URL, LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
-import { UI_COLORS, UI_RADIUS, UI_TYPE } from '@/src/constants/uiTheme';
+import { UI_RADIUS, UI_TYPE, type UIColors, useUIColors } from '@/src/constants/uiTheme';
 import { useAppSettings, type AppSettings } from '@/src/context/AppSettingsContext';
 import { clearAllBlocks, getAllBlocksByDay, getBlocksForDay, insertBlock } from '@/src/storage/blocksDb';
 import type { Block as TimeBlock, BlockRepeatRule, Lane } from '@/src/types/blocks';
@@ -576,6 +576,7 @@ function dismissKeyboardOnSubmit() {
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const colors = useUIColors();
   const { dayKey: dayKeyParam } = useLocalSearchParams<{
     dayKey?: string | string[];
   }>();
@@ -684,6 +685,7 @@ export default function SettingsScreen() {
       }),
     [allCategoryColors, editingCategoryColor, editingCategoryColorSetExcludingCurrent]
   );
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   useEffect(() => {
     if (!copyPlanFromDayVisible) {
@@ -1507,7 +1509,7 @@ export default function SettingsScreen() {
           <View style={styles.sheetHeaderRow}>
             <Text style={styles.sheetTitle}>Settings</Text>
             <Pressable accessibilityLabel="Close settings" style={styles.sheetCloseButton} onPress={() => router.back()}>
-              <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+              <Ionicons name="close" size={20} color={colors.neutralText} />
             </Pressable>
           </View>
           <ScrollView
@@ -1536,13 +1538,13 @@ export default function SettingsScreen() {
                       <Ionicons
                         name={visibleCategoryIdSet.has(category.id) ? 'checkbox' : 'square-outline'}
                         size={17}
-                        color={visibleCategoryIdSet.has(category.id) ? category.color : UI_COLORS.neutralTextSoft}
+                        color={visibleCategoryIdSet.has(category.id) ? category.color : colors.neutralTextSoft}
                       />
                     </Pressable>
                     <View style={[styles.colorDot, { backgroundColor: category.color }]} />
                     <Text style={styles.categoryName}>{category.label}</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
+                  <Ionicons name="chevron-forward" size={16} color={colors.neutralTextSoft} />
                 </Pressable>
               ))}
             </View>
@@ -1552,7 +1554,7 @@ export default function SettingsScreen() {
                 onChangeText={setCategoryName}
                 style={styles.categoryInput}
                 placeholder="New category name"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor={colors.neutralTextSoft}
                 {...DONE_TEXT_INPUT_PROPS}
                 onSubmitEditing={dismissKeyboardOnSubmit}
               />
@@ -1572,7 +1574,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Add custom category color"
                   style={styles.customColorButton}
                   onPress={() => setShowAddCustomColorInput((value) => !value)}>
-                  <Ionicons name="add" size={16} color={UI_COLORS.neutralText} />
+                  <Ionicons name="add" size={16} color={colors.neutralText} />
                 </Pressable>
               </ScrollView>
               {showAddCustomColorInput ? (
@@ -1584,7 +1586,7 @@ export default function SettingsScreen() {
                     placeholder="#RRGGBB"
                     autoCapitalize="characters"
                     maxLength={7}
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={colors.neutralTextSoft}
                     {...DONE_TEXT_INPUT_PROPS}
                     onSubmitEditing={dismissKeyboardOnSubmit}
                   />
@@ -1664,7 +1666,7 @@ export default function SettingsScreen() {
                   <Text style={styles.categoryName}>TimeMaxx Website</Text>
                   <Text style={styles.legalSummary}>Overview, support, and policy pages.</Text>
                 </View>
-                <Ionicons name="open-outline" size={16} color={UI_COLORS.neutralTextSoft} />
+                <Ionicons name="open-outline" size={16} color={colors.neutralTextSoft} />
               </Pressable>
               {LEGAL_DOCUMENTS.map((document) => (
                 <Pressable
@@ -1676,7 +1678,7 @@ export default function SettingsScreen() {
                     <Text style={styles.categoryName}>{document.title}</Text>
                     <Text style={styles.legalSummary}>{document.summary}</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralTextSoft} />
+                  <Ionicons name="chevron-forward" size={16} color={colors.neutralTextSoft} />
                 </Pressable>
               ))}
             </View>
@@ -1704,7 +1706,7 @@ export default function SettingsScreen() {
               <View style={styles.sheetHeaderRow}>
                 <Text style={styles.sheetTitle}>Edit Category</Text>
                 <Pressable accessibilityLabel="Close category editor" style={styles.sheetCloseButton} onPress={closeCategoryEditor}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                  <Ionicons name="close" size={20} color={colors.neutralText} />
                 </Pressable>
               </View>
 
@@ -1714,7 +1716,7 @@ export default function SettingsScreen() {
                 onChangeText={setEditingCategoryName}
                 style={styles.categoryInput}
                 placeholder="Category name"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor={colors.neutralTextSoft}
                 {...DONE_TEXT_INPUT_PROPS}
                 onSubmitEditing={dismissKeyboardOnSubmit}
               />
@@ -1736,7 +1738,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Add custom category color"
                   style={styles.customColorButton}
                   onPress={() => setShowEditCustomColorInput((value) => !value)}>
-                  <Ionicons name="add" size={16} color={UI_COLORS.neutralText} />
+                  <Ionicons name="add" size={16} color={colors.neutralText} />
                 </Pressable>
               </ScrollView>
               {showEditCustomColorInput ? (
@@ -1748,7 +1750,7 @@ export default function SettingsScreen() {
                     placeholder="#RRGGBB"
                     autoCapitalize="characters"
                     maxLength={7}
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={colors.neutralTextSoft}
                     {...DONE_TEXT_INPUT_PROPS}
                     onSubmitEditing={dismissKeyboardOnSubmit}
                   />
@@ -1798,7 +1800,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Close legal document"
                   style={styles.sheetCloseButton}
                   onPress={() => setActiveLegalDocKey(null)}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                  <Ionicons name="close" size={20} color={colors.neutralText} />
                 </Pressable>
               </View>
               <ScrollView style={styles.legalScroll} contentContainerStyle={styles.legalBody}>
@@ -1843,7 +1845,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Close import data"
                   style={styles.sheetCloseButton}
                   onPress={() => setImportDataVisible(false)}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                  <Ionicons name="close" size={20} color={colors.neutralText} />
                 </Pressable>
               </View>
               <Text style={styles.toggleHint}>Paste backup JSON from Export all data, or text from Export this day.</Text>
@@ -1855,7 +1857,7 @@ export default function SettingsScreen() {
                 textAlignVertical="top"
                 style={styles.summaryImportInput}
                 placeholder="Paste import text here..."
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor={colors.neutralTextSoft}
                 {...DONE_TEXT_INPUT_PROPS}
                 onSubmitEditing={dismissKeyboardOnSubmit}
               />
@@ -1891,7 +1893,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Close export another day dialog"
                   style={styles.sheetCloseButton}
                   onPress={() => setExportAnotherDayVisible(false)}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                  <Ionicons name="close" size={20} color={colors.neutralText} />
                 </Pressable>
               </View>
               <Text style={[styles.toggleHint, styles.copyPlanHint]}>Pick a day to export.</Text>
@@ -1905,14 +1907,14 @@ export default function SettingsScreen() {
                     accessibilityLabel="Show previous month"
                     style={styles.copyPlanMonthButton}
                     onPress={() => setExportCalendarMonthStart((current) => shiftMonth(current, -1))}>
-                    <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+                    <Ionicons name="chevron-back" size={16} color={colors.neutralText} />
                   </Pressable>
                   <Text style={styles.copyPlanMonthLabel}>{exportCalendarMonthLabel}</Text>
                   <Pressable
                     accessibilityLabel="Show next month"
                     style={styles.copyPlanMonthButton}
                     onPress={() => setExportCalendarMonthStart((current) => shiftMonth(current, 1))}>
-                    <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+                    <Ionicons name="chevron-forward" size={16} color={colors.neutralText} />
                   </Pressable>
                 </View>
                 <View style={styles.copyPlanWeekdayRow}>
@@ -1986,7 +1988,7 @@ export default function SettingsScreen() {
                   accessibilityLabel="Close copy plan dialog"
                   style={styles.sheetCloseButton}
                   onPress={() => setCopyPlanFromDayVisible(false)}>
-                  <Ionicons name="close" size={20} color={UI_COLORS.neutralText} />
+                  <Ionicons name="close" size={20} color={colors.neutralText} />
                 </Pressable>
               </View>
               <Text style={[styles.toggleHint, styles.copyPlanHint]}>Pick source and target days, then copy.</Text>
@@ -2018,14 +2020,14 @@ export default function SettingsScreen() {
                     accessibilityLabel="Show previous month"
                     style={styles.copyPlanMonthButton}
                     onPress={() => setCopyPlanCalendarMonthStart((current) => shiftMonth(current, -1))}>
-                    <Ionicons name="chevron-back" size={16} color={UI_COLORS.neutralText} />
+                    <Ionicons name="chevron-back" size={16} color={colors.neutralText} />
                   </Pressable>
                   <Text style={styles.copyPlanMonthLabel}>{copyCalendarMonthLabel}</Text>
                   <Pressable
                     accessibilityLabel="Show next month"
                     style={styles.copyPlanMonthButton}
                     onPress={() => setCopyPlanCalendarMonthStart((current) => shiftMonth(current, 1))}>
-                    <Ionicons name="chevron-forward" size={16} color={UI_COLORS.neutralText} />
+                    <Ionicons name="chevron-forward" size={16} color={colors.neutralText} />
                   </Pressable>
                 </View>
                 <View style={styles.copyPlanWeekdayRow}>
@@ -2094,24 +2096,37 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: UIColors) {
+  const isDark = colors.appBackground === '#0B0D11';
+  const theme = {
+    cardShadow: isDark ? '#000000' : '#111827',
+    onPrimaryText: isDark ? '#0B0D11' : '#FFFFFF',
+    destructiveBorder: isDark ? '#F87171' : '#B91C1C',
+    destructiveBackground: isDark ? '#3F1D1D' : '#FEE2E2',
+    destructiveText: isDark ? '#FCA5A5' : '#991B1B',
+    calloutBorder: colors.neutralBorder,
+    calloutAccentBorder: colors.planned,
+    calloutAccentBackground: colors.plannedTint,
+  };
+
+  return StyleSheet.create({
   modalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: UI_COLORS.overlay,
+    backgroundColor: colors.overlay,
   },
   sheetCard: {
     height: SHEET_VISIBLE_HEIGHT,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: UI_RADIUS.sheet,
     borderTopRightRadius: UI_RADIUS.sheet,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 18,
-    shadowColor: '#111827',
+    shadowColor: theme.cardShadow,
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
@@ -2126,7 +2141,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 5,
     borderRadius: 3,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: colors.neutralBorder,
     marginBottom: 12,
   },
   sheetHeaderRow: {
@@ -2136,7 +2151,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sheetTitle: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: UI_TYPE.section,
     fontWeight: '800',
   },
@@ -2144,14 +2159,14 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   screen: {
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
   },
   content: {
     paddingTop: 4,
@@ -2159,18 +2174,18 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   section: {
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.card,
     padding: 14,
     gap: 10,
   },
   listGroup: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.card,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     overflow: 'hidden',
   },
   categoryRow: {
@@ -2179,7 +2194,7 @@ const styles = StyleSheet.create({
   listRow: {
     paddingHorizontal: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: UI_COLORS.neutralBorder,
+    borderBottomColor: colors.neutralBorder,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2196,7 +2211,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   categoryName: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -2213,10 +2228,10 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   colorChoiceSelected: {
-    borderColor: UI_COLORS.neutralText,
+    borderColor: colors.neutralText,
     borderWidth: 2,
   },
   customColorButton: {
@@ -2224,8 +2239,8 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    borderColor: colors.neutralBorder,
+    backgroundColor: colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2237,24 +2252,24 @@ const styles = StyleSheet.create({
   customColorInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
-    color: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surface,
+    color: colors.neutralText,
+    backgroundColor: colors.surface,
   },
   customColorApplyButton: {
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   customColorApplyButtonText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2264,33 +2279,33 @@ const styles = StyleSheet.create({
   },
   categoryInput: {
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
-    color: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surface,
+    color: colors.neutralText,
+    backgroundColor: colors.surface,
   },
   addCategoryButton: {
     alignSelf: 'flex-start',
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.neutralText,
+    backgroundColor: colors.neutralText,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   addCategoryButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimaryText,
     fontSize: 12,
     fontWeight: '600',
   },
   sectionTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
   },
   toggleHint: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -2301,8 +2316,8 @@ const styles = StyleSheet.create({
     minHeight: 40,
     borderRadius: UI_RADIUS.control,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
+    borderColor: colors.neutralBorder,
+    backgroundColor: colors.surface,
     paddingHorizontal: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2311,21 +2326,21 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   timelineActionButtonText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '600',
   },
   resetButton: {
     borderWidth: 1,
-    borderColor: '#B91C1C',
+    borderColor: theme.destructiveBorder,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: theme.destructiveBackground,
     paddingHorizontal: 12,
     paddingVertical: 10,
     alignItems: 'center',
   },
   resetButtonText: {
-    color: '#991B1B',
+    color: theme.destructiveText,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2338,7 +2353,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   legalSummary: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -2350,7 +2365,7 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   legalParagraph: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '500',
@@ -2358,9 +2373,9 @@ const styles = StyleSheet.create({
   legalPublicUrlHint: {
     flex: 1,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceMuted,
     minHeight: 42,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2370,19 +2385,19 @@ const styles = StyleSheet.create({
     minHeight: 220,
     maxHeight: 360,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.control,
     paddingHorizontal: 10,
     paddingVertical: 10,
     fontSize: 13,
-    color: UI_COLORS.neutralText,
-    backgroundColor: UI_COLORS.surface,
+    color: colors.neutralText,
+    backgroundColor: colors.surface,
   },
   copyPlanCalendarCard: {
     borderWidth: 1,
-    borderColor: '#D4DDE8',
+    borderColor: theme.calloutBorder,
     borderRadius: UI_RADIUS.card,
-    backgroundColor: '#F8FBFF',
+    backgroundColor: colors.surfaceMuted,
     paddingHorizontal: 10,
     paddingVertical: 12,
     gap: 12,
@@ -2397,26 +2412,26 @@ const styles = StyleSheet.create({
   copyPlanFieldCard: {
     flex: 1,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
     borderRadius: UI_RADIUS.card,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 2,
   },
   copyPlanFieldCardActive: {
-    borderColor: '#1D4ED8',
-    backgroundColor: '#EFF6FF',
+    borderColor: theme.calloutAccentBorder,
+    backgroundColor: theme.calloutAccentBackground,
   },
   copyPlanFieldLabel: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
   copyPlanFieldValue: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2426,7 +2441,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   exportSelectedDayValue: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2440,13 +2455,13 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
+    borderColor: colors.neutralBorder,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   copyPlanMonthLabel: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -2456,7 +2471,7 @@ const styles = StyleSheet.create({
   copyPlanWeekdayText: {
     flex: 1,
     textAlign: 'center',
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2485,23 +2500,23 @@ const styles = StyleSheet.create({
   },
   copyPlanDayNumberTargetSelected: {
     borderWidth: 2,
-    borderColor: '#2563EB',
+    borderColor: colors.planned,
   },
   copyPlanDayNumberSelected: {
     borderWidth: 2,
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    borderColor: colors.planned,
+    backgroundColor: colors.plannedTint,
   },
   copyPlanDayText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '700',
   },
   copyPlanDayTextOutsideMonth: {
-    color: '#C2CBD6',
+    color: colors.neutralTextSoft,
   },
   copyPlanDayTextDisabled: {
-    color: UI_COLORS.neutralTextSoft,
+    color: colors.neutralTextSoft,
   },
   copyPlanTodayCircle: {
     position: 'absolute',
@@ -2514,11 +2529,11 @@ const styles = StyleSheet.create({
   editorCard: {
     marginHorizontal: 16,
     borderRadius: UI_RADIUS.card,
-    backgroundColor: UI_COLORS.surface,
+    backgroundColor: colors.surface,
     padding: 14,
     gap: 10,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
+    borderColor: colors.neutralBorder,
   },
   editorActions: {
     flexDirection: 'row',
@@ -2529,12 +2544,12 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 42,
     borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.neutralText,
+    backgroundColor: colors.neutralText,
     alignItems: 'center',
     justifyContent: 'center',
   },
   editorSaveButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimaryText,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2543,14 +2558,14 @@ const styles = StyleSheet.create({
     minHeight: 42,
     borderRadius: UI_RADIUS.control,
     borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
+    borderColor: colors.neutralBorder,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
   editorSecondaryButtonText: {
-    color: UI_COLORS.neutralText,
+    color: colors.neutralText,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2558,15 +2573,16 @@ const styles = StyleSheet.create({
     minHeight: 42,
     borderRadius: UI_RADIUS.control,
     borderWidth: 1,
-    borderColor: '#B91C1C',
-    backgroundColor: '#FEE2E2',
+    borderColor: theme.destructiveBorder,
+    backgroundColor: theme.destructiveBackground,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   editorDeleteButtonText: {
-    color: '#991B1B',
+    color: theme.destructiveText,
     fontSize: 13,
     fontWeight: '700',
   },
-});
+  });
+}

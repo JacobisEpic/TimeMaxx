@@ -20,7 +20,8 @@ import * as Haptics from 'expo-haptics';
 
 import { Block, PIXELS_PER_MINUTE as BASE_PIXELS_PER_MINUTE } from '@/src/components/Block';
 import { BlockEditorModal } from '@/src/components/BlockEditorModal';
-import { UI_COLORS, UI_RADIUS, UI_TYPE, getCategoryColor, getCategoryLabel } from '@/src/constants/uiTheme';
+import { UI_RADIUS, UI_TYPE, type UIColors, getCategoryColor, getCategoryLabel, getUIColors } from '@/src/constants/uiTheme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import {
   deleteBlock,
@@ -494,6 +495,10 @@ async function triggerSuccessHaptic(): Promise<void> {
 export default function DayTimeline() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const colors = getUIColors(colorScheme);
+  const isDark = colorScheme === 'dark';
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const { dayKey: dayKeyParam } = useLocalSearchParams<{
     dayKey?: string | string[];
   }>();
@@ -2704,7 +2709,7 @@ export default function DayTimeline() {
             accessibilityLabel="Back to day view"
             style={styles.calendarTopCloseButton}
             onPress={closeCalendar}>
-            <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+            <Ionicons name="close" size={18} color={colors.neutralText} />
           </Pressable>
         </View>
 
@@ -2809,14 +2814,14 @@ export default function DayTimeline() {
             accessibilityRole="button"
             style={styles.analyticsButton}
             onPress={() => setToolsSheetVisible(true)}>
-            <Ionicons name="bar-chart-outline" size={18} color={UI_COLORS.neutralText} />
+            <Ionicons name="bar-chart-outline" size={18} color={colors.neutralText} />
           </Pressable>
           <Pressable
             accessibilityLabel="Open month view"
             accessibilityRole="button"
             style={styles.analyticsButton}
             onPress={openCalendar}>
-            <Ionicons name="calendar-outline" size={18} color={UI_COLORS.neutralText} />
+            <Ionicons name="calendar-outline" size={18} color={colors.neutralText} />
           </Pressable>
           <Pressable
             accessibilityLabel="Open settings"
@@ -2828,14 +2833,14 @@ export default function DayTimeline() {
                 params: { dayKey },
               })
             }>
-            <Ionicons name="settings-outline" size={18} color={UI_COLORS.neutralText} />
+            <Ionicons name="settings-outline" size={18} color={colors.neutralText} />
           </Pressable>
           <Pressable
             accessibilityLabel={`Add ${(compareMode ? lastUsedCreateLane : selectedLane) === 'planned' ? 'plan' : 'done'} block`}
             accessibilityRole="button"
             style={styles.addButton}
             onPress={() => openCreateEditor(compareMode ? lastUsedCreateLane : selectedLane)}>
-            <Ionicons name="add" size={20} color={UI_COLORS.neutralText} />
+            <Ionicons name="add" size={20} color={colors.neutralText} />
           </Pressable>
         </View>
       </View>
@@ -2847,7 +2852,7 @@ export default function DayTimeline() {
             accessibilityRole="button"
             style={styles.dateNavButton}
             onPress={goToPreviousDay}>
-            <Ionicons name="chevron-back" size={18} color={UI_COLORS.neutralTextSoft} />
+            <Ionicons name="chevron-back" size={18} color={colors.neutralTextSoft} />
           </Pressable>
           <Pressable
             accessibilityLabel="Jump to now"
@@ -2857,7 +2862,7 @@ export default function DayTimeline() {
             <Ionicons
               name="calendar-outline"
               size={15}
-              color={isViewingToday ? UI_COLORS.planned : UI_COLORS.neutralTextSoft}
+              color={isViewingToday ? colors.planned : colors.neutralTextSoft}
             />
             <Text style={[styles.dateLabel, isViewingToday && styles.dateLabelToday]}>{dateRowLabel}</Text>
           </Pressable>
@@ -2869,7 +2874,7 @@ export default function DayTimeline() {
             <Ionicons
               name="chevron-forward"
               size={18}
-              color={UI_COLORS.neutralTextSoft}
+              color={colors.neutralTextSoft}
             />
           </Pressable>
         </View>
@@ -3233,20 +3238,20 @@ export default function DayTimeline() {
                 accessibilityLabel="Close daily insights"
                 style={styles.sheetCloseButton}
                 onPress={() => setToolsSheetVisible(false)}>
-                <Ionicons name="close" size={18} color={UI_COLORS.neutralText} />
+                <Ionicons name="close" size={18} color={colors.neutralText} />
               </Pressable>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
               {!isFutureDay ? (
                 <>
                   <View style={styles.sectionHeader}>
-                    <Ionicons name="speedometer-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                    <Ionicons name="speedometer-outline" size={14} color={colors.neutralTextSoft} />
                     <Text style={styles.sectionTitle}>Execution Score</Text>
                     <Pressable
                       accessibilityLabel="About execution score"
                       style={styles.infoButton}
                       onPress={() => showInsightsInfo('execution')}>
-                      <Ionicons name="information-circle-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                      <Ionicons name="information-circle-outline" size={14} color={colors.neutralTextSoft} />
                     </Pressable>
                   </View>
                   <View style={styles.executionCard}>
@@ -3266,13 +3271,13 @@ export default function DayTimeline() {
               ) : null}
 
               <View style={styles.sectionHeader}>
-                <Ionicons name="analytics-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                <Ionicons name="analytics-outline" size={14} color={colors.neutralTextSoft} />
                 <Text style={styles.sectionTitle}>Planned vs Done</Text>
                 <Pressable
                   accessibilityLabel="About planned versus done totals"
                   style={styles.infoButton}
                   onPress={() => showInsightsInfo('totals')}>
-                  <Ionicons name="information-circle-outline" size={14} color={UI_COLORS.neutralTextSoft} />
+                  <Ionicons name="information-circle-outline" size={14} color={colors.neutralTextSoft} />
                 </Pressable>
               </View>
               <View style={styles.categoryBalanceList}>
@@ -3294,7 +3299,7 @@ export default function DayTimeline() {
                         styles.categoryBarPlan,
                         {
                           width: `${scorecardMetrics.plannedMinutes > 0 ? 100 : 0}%`,
-                          backgroundColor: `${UI_COLORS.accent}66`,
+                          backgroundColor: `${colors.accent}66`,
                         },
                       ]}
                     />
@@ -3312,7 +3317,7 @@ export default function DayTimeline() {
                                 ? 100
                                 : 0
                           }%`,
-                          backgroundColor: UI_COLORS.accent,
+                          backgroundColor: colors.accent,
                         },
                       ]}
                     />
@@ -3379,817 +3384,840 @@ export default function DayTimeline() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: UI_COLORS.appBackground,
-  },
-  topHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-    gap: 8,
-  },
-  appTitle: {
-    flex: 1,
-    fontSize: 20,
-    fontWeight: '600',
-    color: UI_COLORS.neutralText,
-  },
-  topActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  analyticsButton: {
-    width: 36,
-    height: 36,
-    borderRadius: UI_RADIUS.control,
-    backgroundColor: UI_COLORS.glassSurface,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-    minHeight: 34,
-  },
-  dateCenterNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dateNavButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: UI_COLORS.glassSurface,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateLabelWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  dateLabelWrapToday: {
-    borderRadius: 999,
-    borderWidth: 2,
-    borderColor: UI_COLORS.planned,
-    backgroundColor: `${UI_COLORS.planned}18`,
-    paddingHorizontal: 10,
-    minHeight: 34,
-  },
-  dateLabel: {
-    color: UI_COLORS.neutralText,
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  dateLabelToday: {
-    color: UI_COLORS.planned,
-    fontWeight: '700',
-  },
-  dateDivider: {
-    borderTopWidth: 1,
-    borderTopColor: UI_COLORS.neutralBorder,
-    marginBottom: 8,
-  },
-  dayNavButtonDisabled: {
-    opacity: 0.5,
-  },
-  topControlRow: {
-    marginBottom: 6,
-  },
-  dayContent: {
-    flex: 1,
-  },
-  segmentedControl: {
-    flexDirection: 'row',
-    backgroundColor: UI_COLORS.surfaceMuted,
-    borderRadius: 10,
-    padding: 1.5,
-  },
-  segmentButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 30,
-    borderRadius: 9,
-  },
-  segmentButtonSelected: {
-    backgroundColor: UI_COLORS.surface,
-    shadowColor: '#111827',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  segmentButtonText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: UI_COLORS.neutralTextSoft,
-  },
-  segmentButtonTextSelected: {
-    color: UI_COLORS.neutralText,
-    fontWeight: '600',
-  },
-  addButton: {
-    width: 36,
-    height: 36,
-    borderRadius: UI_RADIUS.control,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: UI_COLORS.glassSurface,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-  },
-  feedbackText: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    fontSize: 12,
-    color: UI_COLORS.neutralTextSoft,
-    textAlign: 'center',
-    zIndex: 10,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  timeHeader: {
-    width: TIME_GUTTER_WIDTH,
-  },
-  laneHeaderContainer: {
-    flex: 1,
-    minHeight: 25,
-    borderBottomWidth: 0.5,
-    borderBottomColor: UI_COLORS.neutralBorder,
-    justifyContent: 'center',
-    paddingBottom: 6,
-  },
-  laneHeader: {
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: '500',
-    color: UI_COLORS.neutralText,
-  },
-  compareHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  compareHeaderLabel: {
-    flex: 1,
-    textAlign: 'center',
-    color: UI_COLORS.neutralText,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  compareHeaderDivider: {
-    width: 0.5,
-    alignSelf: 'stretch',
-    backgroundColor: UI_COLORS.neutralBorder,
-  },
-  scrollView: {
-    flex: 1,
-    borderWidth: 0,
-    borderRadius: 0,
-    backgroundColor: UI_COLORS.glassSurface,
-    overflow: 'hidden',
-  },
-  timelineGestureWrap: {
-    flex: 1,
-  },
-  scrollContent: {
-    minHeight: TIMELINE_HEIGHT,
-  },
-  timelineBody: {
-    flexDirection: 'row',
-    position: 'relative',
-  },
-  timeColumn: {
-    width: TIME_GUTTER_WIDTH,
-    borderRightWidth: 0.5,
-    borderRightColor: UI_COLORS.neutralBorder,
-    backgroundColor: 'transparent',
-  },
-  hourLabelWrap: {
-    position: 'absolute',
-    left: 2,
-    transform: [{ translateY: -6 }],
-  },
-  hourLabel: {
-    fontSize: 10,
-    color: UI_COLORS.neutralTextSoft,
-    fontVariant: ['tabular-nums'],
-  },
-  laneSurface: {
-    flex: 1,
-    position: 'relative',
-  },
-  compareWrap: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  compareLane: {
-    flex: 1,
-  },
-  compareLaneLeft: {
-    borderRightWidth: 0.5,
-    borderRightColor: UI_COLORS.neutralBorder,
-  },
-  hourLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: UI_COLORS.neutralBorder,
-  },
-  nowLineWrap: {
-    position: 'absolute',
-    left: TIME_GUTTER_WIDTH - NOW_LINE_CONNECT_OFFSET,
-    right: 0,
-    zIndex: 4,
-  },
-  nowLine: {
-    borderTopWidth: 2,
-    borderTopColor: NOW_COLOR,
-  },
-  nowLineLabelWrap: {
-    position: 'absolute',
-    left: 0,
-    width: TIME_GUTTER_WIDTH,
-    zIndex: 5,
-  },
-  nowLineLabel: {
-    position: 'absolute',
-    top: -NOW_BUBBLE_HEIGHT / 2,
-    right: 0,
-    backgroundColor: NOW_COLOR,
-    height: NOW_BUBBLE_HEIGHT,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: NOW_BUBBLE_HEIGHT / 2,
-    overflow: 'hidden',
-  },
-  nowLineLabelText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  draftBlock: {
-    position: 'absolute',
-    left: 6,
-    right: 6,
-    borderWidth: 1,
-    borderColor: '#0F172A',
-    borderRadius: 8,
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    zIndex: 5,
-  },
-  draftBlockInvalid: {
-    borderColor: '#B91C1C',
-    backgroundColor: '#FEE2E2',
-  },
-  draftBlockText: {
-    color: '#0F172A',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  calendarScreenTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-    gap: 8,
-  },
-  calendarModalRoot: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 28,
-  },
-  calendarBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
-  },
-  calendarSheet: {
-    flex: 1,
-    backgroundColor: '#F2F2F5',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingTop: 10,
-    overflow: 'hidden',
-  },
-  calendarTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  calendarTopTitle: {
-    color: '#111827',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  calendarTopCenterSpacer: {
-    flex: 1,
-  },
-  calendarYearText: {
-    color: '#111827',
-    fontSize: 32,
-    fontWeight: '800',
-    lineHeight: 36,
-  },
-  calendarTopCloseButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  calendarListContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  calendarMonthSection: {
-    marginBottom: 0,
-    paddingBottom: CALENDAR_MONTH_BOTTOM_SPACE,
-  },
-  calendarMonthLabel: {
-    color: '#111827',
-    fontSize: 30,
-    lineHeight: CALENDAR_MONTH_LABEL_HEIGHT,
-    fontWeight: '600',
-    marginBottom: 0,
-    paddingHorizontal: 8,
-  },
-  calendarWeekdayRow: {
-    flexDirection: 'row',
-    height: CALENDAR_WEEKDAY_ROW_HEIGHT,
-    marginBottom: 0,
-    paddingHorizontal: 2,
-    alignItems: 'center',
-  },
-  calendarWeekdayLabel: {
-    flex: 1,
-    textAlign: 'center',
-    color: '#6B7280',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  calendarCell: {
-    width: '14.2857%',
-    height: CALENDAR_CELL_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 2,
-  },
-  calendarCellPlaceholder: {
-    width: '14.2857%',
-    height: CALENDAR_CELL_HEIGHT,
-  },
-  calendarDayBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  calendarDayBadgeSelected: {
-    backgroundColor: '#FF3B30',
-  },
-  calendarDayBadgeToday: {
-    borderWidth: 1.5,
-    borderColor: '#FF3B30',
-  },
-  calendarDayNumber: {
-    color: '#111827',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  calendarDayNumberMuted: {
-    color: '#9CA3AF',
-  },
-  calendarDayNumberSelected: {
-    color: '#FFFFFF',
-  },
-  calendarScoreText: {
-    color: '#2563EB',
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 2,
-    fontVariant: ['tabular-nums'],
-  },
-  calendarScoreTextMuted: {
-    color: '#9CA3AF',
-  },
-  sheetModalRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: UI_COLORS.overlay,
-  },
-  sheetCard: {
-    height: SHEET_VISIBLE_HEIGHT,
-    backgroundColor: UI_COLORS.surface,
-    borderTopLeftRadius: UI_RADIUS.sheet,
-    borderTopRightRadius: UI_RADIUS.sheet,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 18,
-    shadowColor: '#111827',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  sheetGrabber: {
-    alignSelf: 'center',
-    width: 44,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#D1D5DB',
-    marginBottom: 12,
-  },
-  sheetHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sheetTitle: {
-    color: UI_COLORS.neutralText,
-    fontSize: UI_TYPE.section,
-    fontWeight: '800',
-  },
-  sheetCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: UI_COLORS.surfaceMuted,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sheetContent: {
-    gap: 8,
-    paddingBottom: 10,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
-  },
-  infoButton: {
-    marginLeft: 'auto',
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  summaryCard: {
-    borderRadius: 0,
-    paddingHorizontal: 2,
-    paddingVertical: 8,
-    borderWidth: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: UI_COLORS.neutralBorder,
-  },
-  summaryCardPlanned: {
-    backgroundColor: 'transparent',
-    borderColor: 'transparent',
-  },
-  summaryCardDone: {
-    backgroundColor: 'transparent',
-    borderColor: 'transparent',
-  },
-  summaryCardFulfillment: {
-    backgroundColor: 'transparent',
-    borderColor: 'transparent',
-  },
-  summaryCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  summaryCardLabel: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  summaryCardValue: {
-    marginTop: 2,
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  summaryCardValuePlanned: {
-    color: UI_COLORS.planned,
-  },
-  summaryCardValueDone: {
-    color: UI_COLORS.done,
-  },
-  summaryCardValueFulfillment: {
-    color: UI_COLORS.accent,
-  },
-  summaryCardSubtext: {
-    marginTop: 0,
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: UI_TYPE.caption,
-    fontWeight: '600',
-  },
-  sectionTitle: {
-    color: UI_COLORS.neutralText,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  executionCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    backgroundColor: '#E0F2FE',
-    minHeight: 84,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  executionEquation: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'nowrap',
-    columnGap: 8,
-  },
-  executionFraction: {
-    minWidth: 84,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-  },
-  executionFractionBar: {
-    width: '100%',
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: '#0369A1',
-  },
-  executionEquationValue: {
-    color: '#0C4A6E',
-    fontSize: 17,
-    fontWeight: '800',
-    fontVariant: ['tabular-nums'],
-  },
-  executionEquationOperator: {
-    color: '#0369A1',
-    fontSize: 16,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  executionScoreValue: {
-    color: '#0C4A6E',
-    fontSize: 30,
-    fontWeight: '900',
-    fontVariant: ['tabular-nums'],
-  },
-  categoryBalanceList: {
-    gap: 8,
-  },
-  categoryBalanceCard: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: UI_COLORS.glassStroke,
-    backgroundColor: UI_COLORS.glassSurface,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 4,
-  },
-  categoryBalanceHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-  },
-  barLabel: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  categoryBalanceDelta: {
-    color: UI_COLORS.neutralText,
-    fontSize: 12,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  overallDeltaLabel: {
-    alignSelf: 'flex-end',
-  },
-  tagBreakdownList: {
-    gap: 8,
-  },
-  tagBreakdownRow: {
-    borderRadius: UI_RADIUS.control,
-    borderWidth: 1,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 2,
-  },
-  tagBreakdownTag: {
-    color: UI_COLORS.neutralText,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  tagBreakdownMeta: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  emptySheetText: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  fulfillmentCard: {
-    borderRadius: 10,
-    backgroundColor: UI_COLORS.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: UI_COLORS.neutralBorder,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 6,
-  },
-  fulfillmentRowTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  fulfillmentTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  categoryDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-  },
-  fulfillmentTitle: {
-    color: UI_COLORS.neutralText,
-    fontSize: 13,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  fulfillmentPercent: {
-    color: UI_COLORS.neutralText,
-    fontSize: 14,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  fulfillmentRowMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  fulfillmentMeta: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  progressTrack: {
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-  },
-  categoryCard: {
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: UI_COLORS.neutralBorder,
-    backgroundColor: UI_COLORS.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 6,
-  },
-  categoryHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 2,
-  },
-  categoryTitle: {
-    color: UI_COLORS.neutralText,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  categoryLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  categoryLineLabel: {
-    color: UI_COLORS.neutralTextSoft,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  categoryLineValue: {
-    color: UI_COLORS.neutralText,
-    fontSize: 12,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  categoryTrack: {
-    height: 7,
-    borderRadius: 999,
-    backgroundColor: '#F1F5F9',
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  categoryBarPlan: {
-    height: '100%',
-    borderRadius: 999,
-  },
-  categoryBarDone: {
-    height: '100%',
-    borderRadius: 999,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  quickAddCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
-    gap: 8,
-  },
-  quickAddTitle: {
-    color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  modalClose: {
-    marginTop: 4,
-    alignSelf: 'flex-end',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  modalCloseText: {
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '600',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-});
+function createStyles(colors: UIColors, isDark: boolean) {
+  const theme = {
+    accentText: '#FFFFFF',
+    cardShadow: isDark ? '#000000' : '#111827',
+    draftBorder: isDark ? '#334155' : '#0F172A',
+    draftBackground: isDark ? '#1E293B' : '#E2E8F0',
+    draftText: colors.neutralText,
+    draftInvalidBorder: isDark ? '#EF4444' : '#B91C1C',
+    draftInvalidBackground: isDark ? '#3F1D1D' : '#FEE2E2',
+    calendarBackdrop: isDark ? 'rgba(0, 0, 0, 0.58)' : 'rgba(15, 23, 42, 0.28)',
+    calendarSheetBackground: isDark ? '#10151D' : '#F2F2F5',
+    calendarMutedText: isDark ? '#64748B' : '#9CA3AF',
+    sheetGrabber: isDark ? '#4B5563' : '#D1D5DB',
+    executionBorder: isDark ? '#0EA5E9' : '#BAE6FD',
+    executionBackground: isDark ? '#082F49' : '#E0F2FE',
+    executionAccent: isDark ? '#7DD3FC' : '#0369A1',
+    executionText: isDark ? '#E0F2FE' : '#0C4A6E',
+    progressTrack: isDark ? '#233041' : '#E5E7EB',
+    categoryTrack: isDark ? '#1E293B' : '#F1F5F9',
+    modalBackdrop: isDark ? 'rgba(0, 0, 0, 0.58)' : 'rgba(15, 23, 42, 0.35)',
+  };
+
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.appBackground,
+    },
+    topHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+      gap: 8,
+    },
+    appTitle: {
+      flex: 1,
+      fontSize: 20,
+      fontWeight: '600',
+      color: colors.neutralText,
+    },
+    topActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    analyticsButton: {
+      width: 36,
+      height: 36,
+      borderRadius: UI_RADIUS.control,
+      backgroundColor: colors.glassSurface,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dateRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 6,
+      minHeight: 34,
+    },
+    dateCenterNav: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    dateNavButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      backgroundColor: colors.glassSurface,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dateLabelWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    dateLabelWrapToday: {
+      borderRadius: 999,
+      borderWidth: 2,
+      borderColor: colors.planned,
+      backgroundColor: `${colors.planned}18`,
+      paddingHorizontal: 10,
+      minHeight: 34,
+    },
+    dateLabel: {
+      color: colors.neutralText,
+      fontSize: 15,
+      fontWeight: '500',
+    },
+    dateLabelToday: {
+      color: colors.planned,
+      fontWeight: '700',
+    },
+    dateDivider: {
+      borderTopWidth: 1,
+      borderTopColor: colors.neutralBorder,
+      marginBottom: 8,
+    },
+    dayNavButtonDisabled: {
+      opacity: 0.5,
+    },
+    topControlRow: {
+      marginBottom: 6,
+    },
+    dayContent: {
+      flex: 1,
+    },
+    segmentedControl: {
+      flexDirection: 'row',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: 10,
+      padding: 1.5,
+    },
+    segmentButton: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 30,
+      borderRadius: 9,
+    },
+    segmentButtonSelected: {
+      backgroundColor: colors.surface,
+      shadowColor: theme.cardShadow,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 2,
+      elevation: 1,
+    },
+    segmentButtonText: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: colors.neutralTextSoft,
+    },
+    segmentButtonTextSelected: {
+      color: colors.neutralText,
+      fontWeight: '600',
+    },
+    addButton: {
+      width: 36,
+      height: 36,
+      borderRadius: UI_RADIUS.control,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.glassSurface,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+    },
+    feedbackText: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      fontSize: 12,
+      color: colors.neutralTextSoft,
+      textAlign: 'center',
+      zIndex: 10,
+    },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    timeHeader: {
+      width: TIME_GUTTER_WIDTH,
+    },
+    laneHeaderContainer: {
+      flex: 1,
+      minHeight: 25,
+      borderBottomWidth: 0.5,
+      borderBottomColor: colors.neutralBorder,
+      justifyContent: 'center',
+      paddingBottom: 6,
+    },
+    laneHeader: {
+      textAlign: 'center',
+      fontSize: 12,
+      fontWeight: '500',
+      color: colors.neutralText,
+    },
+    compareHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    compareHeaderLabel: {
+      flex: 1,
+      textAlign: 'center',
+      color: colors.neutralText,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    compareHeaderDivider: {
+      width: 0.5,
+      alignSelf: 'stretch',
+      backgroundColor: colors.neutralBorder,
+    },
+    scrollView: {
+      flex: 1,
+      borderWidth: 0,
+      borderRadius: 0,
+      backgroundColor: colors.glassSurface,
+      overflow: 'hidden',
+    },
+    timelineGestureWrap: {
+      flex: 1,
+    },
+    scrollContent: {
+      minHeight: TIMELINE_HEIGHT,
+    },
+    timelineBody: {
+      flexDirection: 'row',
+      position: 'relative',
+    },
+    timeColumn: {
+      width: TIME_GUTTER_WIDTH,
+      borderRightWidth: 0.5,
+      borderRightColor: colors.neutralBorder,
+      backgroundColor: 'transparent',
+    },
+    hourLabelWrap: {
+      position: 'absolute',
+      left: 2,
+      transform: [{ translateY: -6 }],
+    },
+    hourLabel: {
+      fontSize: 10,
+      color: colors.neutralTextSoft,
+      fontVariant: ['tabular-nums'],
+    },
+    laneSurface: {
+      flex: 1,
+      position: 'relative',
+    },
+    compareWrap: {
+      flex: 1,
+      flexDirection: 'row',
+    },
+    compareLane: {
+      flex: 1,
+    },
+    compareLaneLeft: {
+      borderRightWidth: 0.5,
+      borderRightColor: colors.neutralBorder,
+    },
+    hourLine: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.neutralBorder,
+    },
+    nowLineWrap: {
+      position: 'absolute',
+      left: TIME_GUTTER_WIDTH - NOW_LINE_CONNECT_OFFSET,
+      right: 0,
+      zIndex: 4,
+    },
+    nowLine: {
+      borderTopWidth: 2,
+      borderTopColor: NOW_COLOR,
+    },
+    nowLineLabelWrap: {
+      position: 'absolute',
+      left: 0,
+      width: TIME_GUTTER_WIDTH,
+      zIndex: 5,
+    },
+    nowLineLabel: {
+      position: 'absolute',
+      top: -NOW_BUBBLE_HEIGHT / 2,
+      right: 0,
+      backgroundColor: NOW_COLOR,
+      height: NOW_BUBBLE_HEIGHT,
+      paddingHorizontal: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: NOW_BUBBLE_HEIGHT / 2,
+      overflow: 'hidden',
+    },
+    nowLineLabelText: {
+      color: theme.accentText,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    draftBlock: {
+      position: 'absolute',
+      left: 6,
+      right: 6,
+      borderWidth: 1,
+      borderColor: theme.draftBorder,
+      borderRadius: 8,
+      backgroundColor: theme.draftBackground,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      zIndex: 5,
+    },
+    draftBlockInvalid: {
+      borderColor: theme.draftInvalidBorder,
+      backgroundColor: theme.draftInvalidBackground,
+    },
+    draftBlockText: {
+      color: theme.draftText,
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    calendarScreenTopBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+      gap: 8,
+    },
+    calendarModalRoot: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 28,
+    },
+    calendarBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: theme.calendarBackdrop,
+    },
+    calendarSheet: {
+      flex: 1,
+      backgroundColor: theme.calendarSheetBackground,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: colors.neutralBorder,
+      paddingTop: 10,
+      overflow: 'hidden',
+    },
+    calendarTopBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.neutralBorder,
+    },
+    calendarTopTitle: {
+      color: colors.neutralText,
+      fontSize: 18,
+      fontWeight: '800',
+    },
+    calendarTopCenterSpacer: {
+      flex: 1,
+    },
+    calendarYearText: {
+      color: colors.neutralText,
+      fontSize: 32,
+      fontWeight: '800',
+      lineHeight: 36,
+    },
+    calendarTopCloseButton: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      borderWidth: 1,
+      borderColor: colors.neutralBorder,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    calendarListContent: {
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    calendarMonthSection: {
+      marginBottom: 0,
+      paddingBottom: CALENDAR_MONTH_BOTTOM_SPACE,
+    },
+    calendarMonthLabel: {
+      color: colors.neutralText,
+      fontSize: 30,
+      lineHeight: CALENDAR_MONTH_LABEL_HEIGHT,
+      fontWeight: '600',
+      marginBottom: 0,
+      paddingHorizontal: 8,
+    },
+    calendarWeekdayRow: {
+      flexDirection: 'row',
+      height: CALENDAR_WEEKDAY_ROW_HEIGHT,
+      marginBottom: 0,
+      paddingHorizontal: 2,
+      alignItems: 'center',
+    },
+    calendarWeekdayLabel: {
+      flex: 1,
+      textAlign: 'center',
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    calendarGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    calendarCell: {
+      width: '14.2857%',
+      height: CALENDAR_CELL_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      paddingTop: 2,
+    },
+    calendarCellPlaceholder: {
+      width: '14.2857%',
+      height: CALENDAR_CELL_HEIGHT,
+    },
+    calendarDayBadge: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    calendarDayBadgeSelected: {
+      backgroundColor: NOW_COLOR,
+    },
+    calendarDayBadgeToday: {
+      borderWidth: 1.5,
+      borderColor: NOW_COLOR,
+    },
+    calendarDayNumber: {
+      color: colors.neutralText,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    calendarDayNumberMuted: {
+      color: theme.calendarMutedText,
+    },
+    calendarDayNumberSelected: {
+      color: theme.accentText,
+    },
+    calendarScoreText: {
+      color: colors.planned,
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: 2,
+      fontVariant: ['tabular-nums'],
+    },
+    calendarScoreTextMuted: {
+      color: theme.calendarMutedText,
+    },
+    sheetModalRoot: {
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheetBackdrop: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+    },
+    sheetCard: {
+      height: SHEET_VISIBLE_HEIGHT,
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: UI_RADIUS.sheet,
+      borderTopRightRadius: UI_RADIUS.sheet,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 18,
+      shadowColor: theme.cardShadow,
+      shadowOffset: { width: 0, height: -4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 8,
+      elevation: 4,
+    },
+    sheetGrabber: {
+      alignSelf: 'center',
+      width: 44,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: theme.sheetGrabber,
+      marginBottom: 12,
+    },
+    sheetHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    sheetTitle: {
+      color: colors.neutralText,
+      fontSize: UI_TYPE.section,
+      fontWeight: '800',
+    },
+    sheetCloseButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      backgroundColor: colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: colors.neutralBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sheetContent: {
+      gap: 8,
+      paddingBottom: 10,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 8,
+    },
+    infoButton: {
+      marginLeft: 'auto',
+      width: 20,
+      height: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    summaryCard: {
+      borderRadius: 0,
+      paddingHorizontal: 2,
+      paddingVertical: 8,
+      borderWidth: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.neutralBorder,
+    },
+    summaryCardPlanned: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+    },
+    summaryCardDone: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+    },
+    summaryCardFulfillment: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+    },
+    summaryCardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    summaryCardLabel: {
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    summaryCardValue: {
+      marginTop: 2,
+      fontSize: 20,
+      fontWeight: '700',
+    },
+    summaryCardValuePlanned: {
+      color: colors.planned,
+    },
+    summaryCardValueDone: {
+      color: colors.done,
+    },
+    summaryCardValueFulfillment: {
+      color: colors.accent,
+    },
+    summaryCardSubtext: {
+      marginTop: 0,
+      color: colors.neutralTextSoft,
+      fontSize: UI_TYPE.caption,
+      fontWeight: '600',
+    },
+    sectionTitle: {
+      color: colors.neutralText,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    executionCard: {
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.executionBorder,
+      backgroundColor: theme.executionBackground,
+      minHeight: 84,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    executionEquation: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexWrap: 'nowrap',
+      columnGap: 8,
+    },
+    executionFraction: {
+      minWidth: 84,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 3,
+    },
+    executionFractionBar: {
+      width: '100%',
+      height: 2,
+      borderRadius: 1,
+      backgroundColor: theme.executionAccent,
+    },
+    executionEquationValue: {
+      color: theme.executionText,
+      fontSize: 17,
+      fontWeight: '800',
+      fontVariant: ['tabular-nums'],
+    },
+    executionEquationOperator: {
+      color: theme.executionAccent,
+      fontSize: 16,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    executionScoreValue: {
+      color: theme.executionText,
+      fontSize: 30,
+      fontWeight: '900',
+      fontVariant: ['tabular-nums'],
+    },
+    categoryBalanceList: {
+      gap: 8,
+    },
+    categoryBalanceCard: {
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.glassStroke,
+      backgroundColor: colors.glassSurface,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 4,
+    },
+    categoryBalanceHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 8,
+    },
+    barLabel: {
+      color: colors.neutralTextSoft,
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    categoryBalanceDelta: {
+      color: colors.neutralText,
+      fontSize: 12,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    overallDeltaLabel: {
+      alignSelf: 'flex-end',
+    },
+    tagBreakdownList: {
+      gap: 8,
+    },
+    tagBreakdownRow: {
+      borderRadius: UI_RADIUS.control,
+      borderWidth: 1,
+      borderColor: colors.neutralBorder,
+      backgroundColor: colors.surface,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      gap: 2,
+    },
+    tagBreakdownTag: {
+      color: colors.neutralText,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    tagBreakdownMeta: {
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    emptySheetText: {
+      color: colors.neutralTextSoft,
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    fulfillmentCard: {
+      borderRadius: 10,
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.neutralBorder,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      gap: 6,
+    },
+    fulfillmentRowTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    fulfillmentTitleWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flex: 1,
+    },
+    categoryDot: {
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+    },
+    fulfillmentTitle: {
+      color: colors.neutralText,
+      fontSize: 13,
+      fontWeight: '600',
+      flexShrink: 1,
+    },
+    fulfillmentPercent: {
+      color: colors.neutralText,
+      fontSize: 14,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    fulfillmentRowMeta: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    fulfillmentMeta: {
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    progressTrack: {
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: theme.progressTrack,
+      overflow: 'hidden',
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    categoryCard: {
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.neutralBorder,
+      backgroundColor: colors.surface,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      gap: 6,
+    },
+    categoryHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 2,
+    },
+    categoryTitle: {
+      color: colors.neutralText,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    categoryLine: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    categoryLineLabel: {
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    categoryLineValue: {
+      color: colors.neutralText,
+      fontSize: 12,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    categoryTrack: {
+      height: 7,
+      borderRadius: 999,
+      backgroundColor: theme.categoryTrack,
+      overflow: 'hidden',
+      marginBottom: 4,
+    },
+    categoryBarPlan: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    categoryBarDone: {
+      height: '100%',
+      borderRadius: 999,
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: theme.modalBackdrop,
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    },
+    quickAddCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 14,
+      gap: 8,
+    },
+    quickAddTitle: {
+      color: colors.neutralText,
+      fontSize: 13,
+      fontWeight: '700',
+      marginBottom: 2,
+    },
+    modalClose: {
+      marginTop: 4,
+      alignSelf: 'flex-end',
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    modalCloseText: {
+      color: colors.neutralText,
+      fontWeight: '600',
+    },
+    loadingOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    loadingText: {
+      color: colors.neutralTextSoft,
+      fontSize: 12,
+      fontWeight: '600',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.neutralBorder,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+  });
+}

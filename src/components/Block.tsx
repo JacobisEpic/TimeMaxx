@@ -4,7 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
-import { UI_COLORS, getCategoryColor, getCategoryLabel, getCategoryTint } from '@/src/constants/uiTheme';
+import { type UIColors, getCategoryColor, getCategoryLabel, getCategoryTint, useUIColors } from '@/src/constants/uiTheme';
 import type { Lane } from '@/src/types/blocks';
 import { formatMinutesAmPm } from '@/src/utils/time';
 
@@ -70,6 +70,8 @@ export function Block({
   pixelsPerMinute = PIXELS_PER_MINUTE,
   suppressText = false,
 }: BlockProps) {
+  const colors = useUIColors();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const effectivePixelsPerMinute = Math.max(0.01, pixelsPerMinute);
   const durationMin = Math.max(1, endMin - startMin);
   const top = Math.round(startMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR;
@@ -190,16 +192,16 @@ export function Block({
           top,
           height,
           backgroundColor: tintedFill,
-          borderColor: UI_COLORS.glassStrokeSoft,
+          borderColor: colors.glassStrokeSoft,
         },
-      ]}>
+        ]}>
       <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
       {showCopyCheckbox ? (
         <Animated.View style={styles.checkboxWrap}>
           <Ionicons
             name={copyCheckboxChecked ? 'checkmark-circle' : 'ellipse-outline'}
             size={16}
-            color={copyCheckboxChecked ? UI_COLORS.done : UI_COLORS.neutralTextSoft}
+            color={copyCheckboxChecked ? colors.done : colors.neutralTextSoft}
           />
         </Animated.View>
       ) : null}
@@ -226,51 +228,53 @@ export function Block({
   return <GestureDetector gesture={composedGesture}>{blockView}</GestureDetector>;
 }
 
-const styles = StyleSheet.create({
-  block: {
-    position: 'absolute',
-    left: 6,
-    right: 6,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingLeft: 10,
-    paddingRight: 8,
-    paddingVertical: 6,
-    overflow: 'hidden',
-  },
-  blockWithCheckbox: {
-    paddingLeft: 28,
-  },
-  checkboxWrap: {
-    position: 'absolute',
-    top: 5,
-    left: 8,
-    width: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  spine: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 4,
-  },
-  title: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  tag: {
-    marginTop: 1,
-    fontSize: 10,
-    color: '#6B7280',
-    textTransform: 'capitalize',
-  },
-  timeText: {
-    marginTop: 1,
-    fontSize: 9,
-    fontWeight: '500',
-  },
-});
+function createStyles(colors: UIColors) {
+  return StyleSheet.create({
+    block: {
+      position: 'absolute',
+      left: 6,
+      right: 6,
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingLeft: 10,
+      paddingRight: 8,
+      paddingVertical: 6,
+      overflow: 'hidden',
+    },
+    blockWithCheckbox: {
+      paddingLeft: 28,
+    },
+    checkboxWrap: {
+      position: 'absolute',
+      top: 5,
+      left: 8,
+      width: 18,
+      height: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    spine: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      width: 4,
+    },
+    title: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.neutralText,
+    },
+    tag: {
+      marginTop: 1,
+      fontSize: 10,
+      color: colors.neutralTextSoft,
+      textTransform: 'capitalize',
+    },
+    timeText: {
+      marginTop: 1,
+      fontSize: 9,
+      fontWeight: '500',
+    },
+  });
+}
