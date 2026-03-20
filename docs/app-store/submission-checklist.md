@@ -1,6 +1,6 @@
 # App Store Submission Checklist Status
 
-Last updated: March 18, 2026
+Last updated: March 20, 2026
 
 ## Legend
 - COMPLETE: Implemented in this repository or confirmed in app behavior.
@@ -21,7 +21,8 @@ Last updated: March 18, 2026
 - COMPLETE: Support email is configured to `jacobchin.builds@gmail.com` in app and legal docs.
 - COMPLETE: Privacy policy describes data collection, storage, and deletion.
 - COMPLETE: Public overview, support, privacy, and terms URLs are configured in `src/constants/releaseMetadata.ts`.
-- MANUAL: Verify the public Privacy Policy URL is live and add it in App Store Connect.
+- COMPLETE: Verified on March 20, 2026 that the public Privacy Policy URL returns HTTP 200.
+- MANUAL: Add the exact public Privacy Policy URL in App Store Connect.
 
 ## 3) Business setup
 - MANUAL: Small Business Program enrollment.
@@ -81,13 +82,13 @@ Last updated: March 18, 2026
 
 ## 14) Final submit pass
 - MANUAL: Validate listing copy/screenshots match the exact build submitted.
-- MANUAL: Validate the public Privacy Policy URL is live and non-404.
+- COMPLETE: Verified on March 20, 2026 that the public Privacy Policy URL is live and non-404.
 - COMPLETE: No placeholder text or fake flows detected in-app.
 - COMPLETE: Core use-case can be completed quickly.
 - MANUAL: Set up rapid response process for App Review messages.
 
 ## Remaining actions requiring your input
-1. Verify the public Privacy Policy URL is live, then submit that exact URL in App Store Connect.
+1. Submit the exact public Privacy Policy URL in App Store Connect.
 2. Verify support inbox monitoring process is active for App Review and production.
 3. Complete App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
 4. Produce and upload final App Store listing copy + screenshots.

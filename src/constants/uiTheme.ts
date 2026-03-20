@@ -1,5 +1,13 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+export {
+  CATEGORY_COLORS,
+  getCategoryBorder,
+  getCategoryColor,
+  getCategoryLabel,
+  getCategoryTint,
+} from '@/src/constants/categoryTheme';
+
 export const UI_COLORS_LIGHT = {
   appBackground: '#F6F7F9',
   surface: '#FFFFFF',
@@ -70,81 +78,3 @@ export const UI_TYPE = {
   body: 14,
   caption: 12,
 } as const;
-
-export const CATEGORY_COLORS = {
-  work: '#3B82F6',
-  health: '#22C55E',
-  chores: '#EC4899',
-  hobbies: '#8B5CF6',
-  break: '#F59E0B',
-  other: '#9CA3AF',
-  // Legacy tags are kept for older imported/sample data.
-  focus: '#8B5CF6',
-  meeting: '#0EA5A4',
-  admin: '#94A3B8',
-  personal: '#14B8A6',
-  uncategorized: '#94A3B8',
-} as const;
-
-function withAlpha(hexColor: string, alpha: string): string {
-  return `${hexColor}${alpha}`;
-}
-
-export function getCategoryColor(tag?: string): string {
-  const normalized = tag?.trim().toLowerCase() ?? 'uncategorized';
-  if (normalized in CATEGORY_COLORS) {
-    return CATEGORY_COLORS[normalized as keyof typeof CATEGORY_COLORS];
-  }
-
-  return CATEGORY_COLORS.uncategorized;
-}
-
-export function getCategoryTint(tag?: string): string {
-  return withAlpha(getCategoryColor(tag), '1C');
-}
-
-export function getCategoryBorder(tag?: string): string {
-  return withAlpha(getCategoryColor(tag), '55');
-}
-
-export function getCategoryLabel(tag?: string, categoryLabelMap?: Record<string, string>): string {
-  const normalized = tag?.trim().toLowerCase() ?? 'uncategorized';
-
-  const configuredLabel = categoryLabelMap?.[normalized]?.trim();
-  if (configuredLabel) {
-    return configuredLabel;
-  }
-
-  if (normalized === 'work') {
-    return 'Work';
-  }
-  if (normalized === 'health') {
-    return 'Health';
-  }
-  if (normalized === 'chores') {
-    return 'Chores';
-  }
-  if (normalized === 'hobbies') {
-    return 'Hobbies';
-  }
-  if (normalized === 'break') {
-    return 'Break';
-  }
-  if (normalized === 'other') {
-    return 'None';
-  }
-  if (normalized === 'focus') {
-    return 'Deep Focus';
-  }
-  if (normalized === 'meeting') {
-    return 'Meeting';
-  }
-  if (normalized === 'personal') {
-    return 'Personal';
-  }
-  if (normalized === 'admin') {
-    return 'Admin';
-  }
-
-  return 'Uncategorized';
-}

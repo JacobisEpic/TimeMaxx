@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { getCategoryLabel } = require('../src/constants/uiTheme.ts');
+const { getCategoryLabel } = require('../src/constants/categoryTheme.ts');
 
 test('getCategoryLabel keeps protected none label for other category id', () => {
   assert.equal(getCategoryLabel('other'), 'None');

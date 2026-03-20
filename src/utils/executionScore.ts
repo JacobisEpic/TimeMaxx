@@ -6,7 +6,7 @@ const BREAK_CATEGORY_ID = 'break';
 const EXCLUDED_CATEGORY_IDS = new Set(['none', 'other']);
 
 function getCategoryId(block: Pick<Block, 'tags'>): string {
-  return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
+  return block.tags[0]?.trim().toLowerCase() || 'other';
 }
 
 function isBreakCategory(block: Pick<Block, 'tags'>): boolean {

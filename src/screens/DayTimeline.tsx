@@ -435,7 +435,7 @@ function computeDeltaPercent(doneMinutes: number, plannedMinutes: number): numbe
 }
 
 function getCategoryKey(block: TimeBlock): string {
-  return block.tags[0]?.trim().toLowerCase() || 'uncategorized';
+  return block.tags[0]?.trim().toLowerCase() || 'other';
 }
 
 function isExcludedFromCategoryVariance(block: TimeBlock): boolean {
