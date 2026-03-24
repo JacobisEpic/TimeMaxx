@@ -5,7 +5,7 @@ import { getLocalDayKey } from '@/src/utils/dayKey';
 import { normalizeRepeatRule } from '@/src/utils/recurrence';
 
 import {
-  buildFirstLaunchSampleBlocks,
+  buildFirstLaunchSampleDay,
   createFirstLaunchSeedState,
   FIRST_LAUNCH_SEED_META_KEY,
 } from './firstLaunchSeed';
@@ -306,13 +306,30 @@ async function ensureFirstLaunchSeedHandled(db: SQLite.SQLiteDatabase): Promise<
   }
 
   const todayDayKey = getLocalDayKey();
-  const sampleBlocks = buildFirstLaunchSampleBlocks();
+  const sampleDay = buildFirstLaunchSampleDay();
   const now = Date.now();
+  const plannedIdByTitle = new Map<string, string>();
 
   await db.execAsync('BEGIN IMMEDIATE TRANSACTION;');
   try {
-    for (const block of sampleBlocks) {
-      await insertBlockRecord(db, block, todayDayKey, now);
+    for (const block of sampleDay.planned) {
+      const inserted = await insertBlockRecord(db, block, todayDayKey, now);
+      plannedIdByTitle.set(block.title.trim().toLowerCase(), inserted.id);
+    }
+
+    for (const block of sampleDay.done) {
+      const { linkedPlannedTitle, ...doneBlock } = block;
+      await insertBlockRecord(
+        db,
+        {
+          ...doneBlock,
+          linkedPlannedId: linkedPlannedTitle
+            ? plannedIdByTitle.get(linkedPlannedTitle.trim().toLowerCase()) ?? null
+            : null,
+        },
+        todayDayKey,
+        now
+      );
     }
 
     await setMetaValueInDb(

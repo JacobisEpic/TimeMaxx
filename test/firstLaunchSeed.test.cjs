@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildFirstLaunchSampleDay,
   buildFirstLaunchSampleBlocks,
   createFirstLaunchSeedState,
   FIRST_LAUNCH_SEED_META_KEY,
@@ -38,6 +39,25 @@ test('first-launch sample blocks cover both lanes without overlaps', () => {
     assert.ok(block.endMin <= 24 * 60);
     assert.ok(block.endMin > block.startMin);
     assert.equal(block.tags.length, 1);
+  }
+});
+
+test('first-launch sample links related done blocks back to plan blocks', () => {
+  const sampleDay = buildFirstLaunchSampleDay();
+  const plannedTitles = new Set(sampleDay.planned.map((block) => block.title));
+  const linkedDoneBlocks = sampleDay.done
+    .filter((block) => block.linkedPlannedTitle)
+    .map((block) => [block.title, block.linkedPlannedTitle]);
+
+  assert.deepEqual(linkedDoneBlocks, [
+    ['Deep Work', 'Deep Work'],
+    ['Late Lunch', 'Lunch'],
+    ['Workout', 'Workout'],
+    ['TV', 'Wind Down'],
+  ]);
+
+  for (const [, linkedPlannedTitle] of linkedDoneBlocks) {
+    assert.equal(plannedTitles.has(linkedPlannedTitle), true);
   }
 });
 
