@@ -1,5 +1,6 @@
 {
   "name": "timemaxx",
+  "description": "Local-first iPhone app for planning, tracking, and reviewing time on a visual timeline.",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
