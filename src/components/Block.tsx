@@ -38,9 +38,11 @@ type BlockProps = {
   categoryColorMap?: Record<string, string>;
   categoryLabelMap?: Record<string, string>;
   interactive?: boolean;
+  dragEnabled?: boolean;
   dimmed?: boolean;
   pixelsPerMinute?: number;
   suppressText?: boolean;
+  isActive?: boolean;
 };
 
 export function Block({
@@ -66,9 +68,11 @@ export function Block({
   categoryColorMap,
   categoryLabelMap,
   interactive = true,
+  dragEnabled = true,
   dimmed = false,
   pixelsPerMinute = PIXELS_PER_MINUTE,
   suppressText = false,
+  isActive = false,
 }: BlockProps) {
   const colors = useUIColors();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
@@ -91,7 +95,7 @@ export function Block({
   const lastStepDeltaMin = useSharedValue(0);
 
   const panGesture = Gesture.Pan()
-    .enabled(interactive)
+    .enabled(interactive && dragEnabled)
     .activateAfterLongPress(320)
     .onStart(() => {
       gestureStarted.value = true;
@@ -192,10 +196,12 @@ export function Block({
           top,
           height,
           backgroundColor: tintedFill,
-          borderColor: colors.glassStrokeSoft,
+          borderColor: isActive ? colors.done : colors.glassStrokeSoft,
+          borderWidth: isActive ? 1.5 : 1,
         },
         ]}>
       <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
+      {isActive ? <Text style={styles.activeBadge}>Now</Text> : null}
       {showCopyCheckbox ? (
         <Animated.View style={styles.checkboxWrap}>
           <Ionicons
@@ -214,7 +220,7 @@ export function Block({
             {categoryLabel}
           </Text>
           <Text numberOfLines={1} style={[styles.timeText, { color: categoryColor }]}>
-            {formatMinutesAmPm(shownStartMin)}-{formatMinutesAmPm(shownEndMin)}
+            {formatMinutesAmPm(shownStartMin)}-{isActive ? 'Now' : formatMinutesAmPm(shownEndMin)}
           </Text>
         </>
       ) : null}
@@ -259,6 +265,19 @@ function createStyles(colors: UIColors) {
       top: 0,
       bottom: 0,
       width: 4,
+    },
+    activeBadge: {
+      position: 'absolute',
+      top: 6,
+      right: 8,
+      borderRadius: 999,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      fontSize: 9,
+      fontWeight: '700',
+      color: '#FFFFFF',
+      backgroundColor: colors.done,
+      overflow: 'hidden',
     },
     title: {
       fontSize: 12,

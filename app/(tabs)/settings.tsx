@@ -583,7 +583,7 @@ export default function SettingsScreen() {
   const routeDayKeyRaw = Array.isArray(dayKeyParam) ? dayKeyParam[0] : dayKeyParam;
   const routeDayKey = routeDayKeyRaw && dayKeyToLocalDate(routeDayKeyRaw) ? routeDayKeyRaw : null;
   const timelineDayKey = routeDayKey ?? getLocalDayKey();
-  const { settings, updateSettings, resetCategoriesToDefault, resetAllData, signalDataChanged } =
+  const { settings, updateSettings, resetCategoriesToDefault, resetDayData, resetAllData, signalDataChanged } =
     useAppSettings();
   const [saving, setSaving] = useState(false);
   const [categoryName, setCategoryName] = useState('');
@@ -617,6 +617,7 @@ export default function SettingsScreen() {
   const timelineDateLabel = useMemo(() => formatDayKeyLabel(timelineDayKey), [timelineDayKey]);
   const exportSelectedDateLabel = useMemo(() => formatDayKeyLabel(exportSelectedDayKey), [exportSelectedDayKey]);
   const todayDayKey = getLocalDayKey();
+  const todayDateLabel = useMemo(() => formatDayKeyLabel(todayDayKey), [todayDayKey]);
   const copySourceDateLabel = useMemo(() => formatDayKeyLabel(copyPlanSourceDayKey), [copyPlanSourceDayKey]);
   const copyTargetDateLabel = useMemo(() => formatDayKeyLabel(copyPlanTargetDayKey), [copyPlanTargetDayKey]);
   const exportCalendarMonthLabel = useMemo(
@@ -904,6 +905,34 @@ export default function SettingsScreen() {
                 Alert.alert('Data reset', 'All blocks were deleted and categories were reset.');
               } catch {
                 Alert.alert('Storage error', 'Could not reset data.');
+              } finally {
+                setSaving(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmResetTodayData = () => {
+    Alert.alert(
+      "Reset today's data",
+      `This will permanently delete all plan and done blocks for ${todayDateLabel}. Categories and other days stay unchanged. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset today',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setSaving(true);
+
+              try {
+                await resetDayData(todayDayKey);
+                Alert.alert("Today's data reset", `All blocks for ${todayDateLabel} were deleted.`);
+              } catch {
+                Alert.alert('Storage error', "Could not reset today's data.");
               } finally {
                 setSaving(false);
               }
@@ -1685,13 +1714,24 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.section}>
-            <Pressable
-              accessibilityLabel="Reset all data"
-              style={styles.resetButton}
-              onPress={confirmResetAllData}
-              disabled={saving}>
-              <Text style={styles.resetButtonText}>Reset all data</Text>
-            </Pressable>
+            <Text style={styles.sectionTitle}>Reset</Text>
+            <Text style={styles.toggleHint}>Use these only when you want to delete stored timeline data.</Text>
+            <View style={styles.resetButtonGroup}>
+              <Pressable
+                accessibilityLabel="Reset today's data"
+                style={[styles.resetButton, saving && styles.timelineActionButtonDisabled]}
+                onPress={confirmResetTodayData}
+                disabled={saving}>
+                <Text style={styles.resetButtonText}>Reset today&apos;s data</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Reset all data"
+                style={[styles.resetButton, saving && styles.timelineActionButtonDisabled]}
+                onPress={confirmResetAllData}
+                disabled={saving}>
+                <Text style={styles.resetButtonText}>Reset all data</Text>
+              </Pressable>
+            </View>
           </View>
           </ScrollView>
         </View>
@@ -2343,6 +2383,9 @@ function createStyles(colors: UIColors) {
     color: theme.destructiveText,
     fontSize: 13,
     fontWeight: '700',
+  },
+  resetButtonGroup: {
+    gap: 8,
   },
   legalRow: {
     paddingVertical: 10,

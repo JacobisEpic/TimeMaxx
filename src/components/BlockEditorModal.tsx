@@ -37,6 +37,7 @@ type PickerType = 'startTime' | 'endTime' | null;
 
 type BlockEditorModalProps = {
   visible: boolean;
+  editorSessionKey: number;
   mode: 'create' | 'edit';
   showRepeatControls?: boolean;
   lane: Lane;
@@ -70,7 +71,7 @@ type BlockEditorModalProps = {
   onChangeLane: (lane: Lane) => void;
   onChangeLinkedPlannedId: (value: string | null) => void;
   onCancel: () => void;
-  onSave: () => void;
+  onSave: (overrides?: { title?: string }) => void;
   onDelete: () => void;
   onCopyToDone?: () => void;
 };
@@ -238,6 +239,7 @@ const MINUTE_WHEEL_ITEMS = buildCircularWheelItems(MINUTE_OPTIONS, (value) => St
 
 export function BlockEditorModal({
   visible,
+  editorSessionKey,
   mode,
   showRepeatControls = mode === 'create',
   lane,
@@ -296,6 +298,7 @@ export function BlockEditorModal({
   );
   const [wheelPeriod, setWheelPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('AM');
   const [wheelDuration, setWheelDuration] = useState(60);
+  const [draftTitle, setDraftTitle] = useState(titleValue);
 
   const resolvedCategoryOptions = useMemo(
     () => (categoryOptions.length ? categoryOptions : [...CATEGORY_OPTIONS]),
@@ -385,6 +388,10 @@ export function BlockEditorModal({
     }
   }, [visible]);
 
+  useEffect(() => {
+    setDraftTitle(titleValue);
+  }, [editorSessionKey, titleValue]);
+
   const openRepeatCalendar = () => {
     const selectedDate = dayKeyToLocalDate(repeatUntilDayKey);
     setRepeatCalendarMonthStart(getMonthStart(selectedDate ?? new Date()));
@@ -433,6 +440,15 @@ export function BlockEditorModal({
     setWheelDuration(nextEnd - start);
   };
 
+  const commitDraftTitle = () => {
+    if (draftTitle !== titleValue) {
+      onChangeTitle(draftTitle);
+    }
+  };
+
+  const titleValid = draftTitle.trim().length > 0;
+  const resolvedSaveDisabled = saveDisabled || !titleValid;
+
   return (
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.backdrop}>
@@ -479,14 +495,18 @@ export function BlockEditorModal({
             onScrollBeginDrag={() => Keyboard.dismiss()}>
             <Text style={styles.label}>Title</Text>
             <TextInput
-              value={titleValue}
-              onChangeText={onChangeTitle}
+              value={draftTitle}
+              onChangeText={setDraftTitle}
               placeholder="What are you working on?"
               style={styles.input}
               accessibilityLabel="Block title"
               placeholderTextColor={colors.neutralTextSoft}
               {...DONE_TEXT_INPUT_PROPS}
-              onSubmitEditing={dismissKeyboardOnSubmit}
+              onBlur={commitDraftTitle}
+              onSubmitEditing={() => {
+                commitDraftTitle();
+                dismissKeyboardOnSubmit();
+              }}
             />
 
             <View style={styles.timeControlRow}>
@@ -755,9 +775,12 @@ export function BlockEditorModal({
             ) : null}
             <Pressable
               accessibilityLabel={mode === 'create' ? 'Add block' : 'Save block'}
-              style={[styles.primaryButton, saveDisabled && styles.primaryButtonDisabled]}
-              onPress={onSave}
-              disabled={saveDisabled}>
+              style={[styles.primaryButton, resolvedSaveDisabled && styles.primaryButtonDisabled]}
+              onPress={() => {
+                commitDraftTitle();
+                onSave({ title: draftTitle });
+              }}
+              disabled={resolvedSaveDisabled}>
               <Text style={styles.primaryButtonText}>{mode === 'create' ? 'Add' : 'Save'}</Text>
             </Pressable>
           </View>

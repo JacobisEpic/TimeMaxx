@@ -1,6 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { clearAllBlocks, clearFirstLaunchSeedState, getMetaValue, setMetaValue } from '@/src/storage/blocksDb';
+import {
+  clearAllBlocks,
+  clearBlocksForDay,
+  clearFirstLaunchSeedState,
+  clearMetaValue,
+  getMetaValue,
+  setMetaValue,
+} from '@/src/storage/blocksDb';
+import { ACTIVE_DONE_BLOCK_META_KEY, parseActiveDoneBlockMeta } from '@/src/utils/activeBlock';
 
 export type AppSettings = {
   plannedScanStartMin: number;
@@ -17,6 +25,7 @@ type AppSettingsContextValue = {
   refreshSettings: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
   resetCategoriesToDefault: () => Promise<void>;
+  resetDayData: (dayKey: string) => Promise<void>;
   resetAllData: () => Promise<void>;
   signalDataChanged: () => void;
 };
@@ -246,6 +255,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     await Promise.all([
       clearAllBlocks(),
       clearFirstLaunchSeedState(),
+      clearMetaValue(ACTIVE_DONE_BLOCK_META_KEY),
       setMetaValue(META_KEYS.categories, JSON.stringify(DEFAULT_CATEGORIES)),
       setMetaValue(META_KEYS.visibleCategoryIds, JSON.stringify(DEFAULT_SETTINGS.visibleCategoryIds)),
     ]);
@@ -254,6 +264,18 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       categories: DEFAULT_CATEGORIES,
       visibleCategoryIds: DEFAULT_SETTINGS.visibleCategoryIds,
     }));
+    setDataVersion((current) => current + 1);
+  }, []);
+
+  const resetDayData = useCallback(async (dayKey: string) => {
+    const activeDoneBlock = parseActiveDoneBlockMeta(await getMetaValue(ACTIVE_DONE_BLOCK_META_KEY));
+
+    await clearBlocksForDay(dayKey);
+
+    if (activeDoneBlock?.dayKey === dayKey) {
+      await clearMetaValue(ACTIVE_DONE_BLOCK_META_KEY);
+    }
+
     setDataVersion((current) => current + 1);
   }, []);
 
@@ -281,6 +303,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       refreshSettings,
       updateSettings,
       resetCategoriesToDefault,
+      resetDayData,
       resetAllData,
       signalDataChanged,
     }),
@@ -291,6 +314,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       refreshSettings,
       updateSettings,
       resetCategoriesToDefault,
+      resetDayData,
       resetAllData,
       signalDataChanged,
     ]
