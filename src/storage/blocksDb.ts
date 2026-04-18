@@ -578,6 +578,12 @@ export async function deleteBlock(id: string): Promise<void> {
   await db.runAsync('DELETE FROM blocks WHERE id = ?;', id);
 }
 
+export async function clearBlocksForDay(dayKey: string): Promise<void> {
+  await initDb();
+  const db = await getDb();
+  await db.runAsync('DELETE FROM blocks WHERE dayKey = ?;', dayKey);
+}
+
 export async function clearAllBlocks(): Promise<void> {
   await initDb();
   const db = await getDb();
@@ -594,6 +600,12 @@ export async function setMetaValue(key: string, value: string): Promise<void> {
   await initDb();
   const db = await getDb();
   await setMetaValueInDb(db, key, value);
+}
+
+export async function clearMetaValue(key: string): Promise<void> {
+  await initDb();
+  const db = await getDb();
+  await deleteMetaValueFromDb(db, key);
 }
 
 export async function clearFirstLaunchSeedState(): Promise<void> {

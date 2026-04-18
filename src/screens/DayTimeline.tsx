@@ -24,6 +24,7 @@ import { UI_RADIUS, UI_TYPE, type UIColors, getCategoryColor, getCategoryLabel, 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppSettings } from '@/src/context/AppSettingsContext';
 import {
+  clearMetaValue,
   deleteBlock,
   getBlocksForDay,
   getBlocksForDayRange,
@@ -41,6 +42,13 @@ import type {
   Lane,
   SeriesEditScope,
 } from '@/src/types/blocks';
+import {
+  ACTIVE_DONE_BLOCK_META_KEY,
+  getActiveDoneBlockEffectiveEndMin,
+  parseActiveDoneBlockMeta,
+  serializeActiveDoneBlockMeta,
+  type ActiveDoneBlockMeta,
+} from '@/src/utils/activeBlock';
 import { dayKeyToLocalDate, getLocalDayKey, shiftDayKey } from '@/src/utils/dayKey';
 import { computeExecutionScoreSummary } from '@/src/utils/executionScore';
 import { buildRepeatDayKeys, normalizeRepeatRule } from '@/src/utils/recurrence';
@@ -407,6 +415,10 @@ function findFirstAvailableStartMinAtOrAfter(
 }
 
 function matchesVisibleCategoryIds(block: TimeBlock, visibleCategoryIds: Set<string>): boolean {
+  if (block.tags.length === 0) {
+    return true;
+  }
+
   return block.tags.some((tag) => visibleCategoryIds.has(tag.trim().toLowerCase()));
 }
 
@@ -510,9 +522,11 @@ export default function DayTimeline() {
   const [dataReloadTick, setDataReloadTick] = useState(0);
   const [clockMinute, setClockMinute] = useState(getCurrentMinute);
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
+  const [activeDoneBlock, setActiveDoneBlock] = useState<ActiveDoneBlockMeta | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<EditorState>(INITIAL_EDITOR_STATE);
+  const [editorSessionKey, setEditorSessionKey] = useState(0);
   const [selectedLane, setSelectedLane] = useState<Lane>('planned');
   const [lastUsedCreateLane, setLastUsedCreateLane] = useState<Lane>('planned');
   const [laneVisibility, setLaneVisibility] = useState<Record<Lane, boolean>>({
@@ -541,6 +555,9 @@ export default function DayTimeline() {
   const finalizeHandledRef = useRef(false);
   const createGestureBlockedRef = useRef(false);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeDoneBlockRef = useRef<ActiveDoneBlockMeta | null>(null);
+  const activeDoneMutationInFlightRef = useRef(false);
+  const pendingStartNowEditorBlockIdRef = useRef<string | null>(null);
   const loadRequestIdRef = useRef(0);
   const timelineScrollRef = useRef<ScrollView | null>(null);
   const calendarListRef = useRef<FlatList<CalendarMonth> | null>(null);
@@ -618,7 +635,32 @@ export default function DayTimeline() {
     }).format(date);
   }, [dayKey]);
 
-  const sortedBlocks = useMemo(() => sortByStartMin(blocks), [blocks]);
+  const storedBlocks = useMemo(() => sortByStartMin(blocks), [blocks]);
+  const activeDoneBlockIdForDay = useMemo(
+    () => (activeDoneBlock?.dayKey === dayKey ? activeDoneBlock.blockId : null),
+    [activeDoneBlock, dayKey]
+  );
+  const sortedBlocks = useMemo(
+    () =>
+      sortByStartMin(
+        storedBlocks.map((block) => {
+          if (block.id !== activeDoneBlockIdForDay) {
+            return block;
+          }
+
+          return {
+            ...block,
+            endMin: getActiveDoneBlockEffectiveEndMin(
+              block.startMin,
+              block.endMin,
+              clockMinute,
+              activeDoneBlock?.dayKey === todayDayKey
+            ),
+          };
+        })
+      ),
+    [activeDoneBlock?.dayKey, activeDoneBlockIdForDay, clockMinute, storedBlocks, todayDayKey]
+  );
   const plannedBlocks = useMemo(
     () => sortByStartMin(sortedBlocks.filter((block) => block.lane === 'planned')),
     [sortedBlocks]
@@ -1154,6 +1196,10 @@ export default function DayTimeline() {
   }, []);
 
   useEffect(() => {
+    activeDoneBlockRef.current = activeDoneBlock;
+  }, [activeDoneBlock]);
+
+  useEffect(() => {
     return () => {
       cancelQueuedPinchZoom();
     };
@@ -1216,15 +1262,20 @@ export default function DayTimeline() {
       setFocusedPlannedId(null);
       setDraftCreate(null);
       setDragPreviewById({});
+      setActiveDoneBlock(null);
       draftCreateRef.current = null;
       draftCandidateRef.current = null;
       setIsCreatingDraft(false);
 
       try {
-        const loadedBlocks = await getBlocksForDay(dayKey);
+        const [loadedBlocks, activeDoneRaw] = await Promise.all([
+          getBlocksForDay(dayKey),
+          getMetaValue(ACTIVE_DONE_BLOCK_META_KEY),
+        ]);
 
         if (requestId === loadRequestIdRef.current) {
           setBlocks(sortByStartMin(loadedBlocks));
+          setActiveDoneBlock(parseActiveDoneBlockMeta(activeDoneRaw));
         }
       } catch {
         if (requestId === loadRequestIdRef.current) {
@@ -1345,8 +1396,96 @@ export default function DayTimeline() {
     }, FEEDBACK_DURATION_MS);
   }, []);
 
+  const persistActiveDoneBlock = useCallback(async (nextActiveDoneBlock: ActiveDoneBlockMeta | null) => {
+    if (nextActiveDoneBlock) {
+      await setMetaValue(
+        ACTIVE_DONE_BLOCK_META_KEY,
+        serializeActiveDoneBlockMeta(nextActiveDoneBlock)
+      );
+    } else {
+      await clearMetaValue(ACTIVE_DONE_BLOCK_META_KEY);
+    }
+
+    activeDoneBlockRef.current = nextActiveDoneBlock;
+    setActiveDoneBlock(nextActiveDoneBlock);
+  }, []);
+
+  const finalizeActiveDoneBlock = useCallback(
+    async (options?: { finalMinute?: number }): Promise<TimeBlock | null> => {
+      const currentActiveDoneBlock = activeDoneBlockRef.current;
+
+      if (!currentActiveDoneBlock || activeDoneMutationInFlightRef.current) {
+        return null;
+      }
+
+      activeDoneMutationInFlightRef.current = true;
+
+      try {
+        const dayBlocks = await getBlocksForDay(currentActiveDoneBlock.dayKey);
+        const existing = dayBlocks.find(
+          (block) =>
+            block.id === currentActiveDoneBlock.blockId && block.lane === 'done'
+        );
+
+        if (!existing) {
+          await persistActiveDoneBlock(null);
+
+          if (currentActiveDoneBlock.dayKey === dayKey) {
+            setBlocks(sortByStartMin(dayBlocks));
+          }
+
+          return null;
+        }
+
+        const liveTodayDayKey = getLocalDayKey();
+        const requestedEndMin =
+          options?.finalMinute ??
+          (currentActiveDoneBlock.dayKey === liveTodayDayKey
+            ? getCurrentMinute()
+            : MINUTES_PER_DAY);
+        const finalEndMin = clamp(
+          requestedEndMin,
+          existing.startMin + 1,
+          MINUTES_PER_DAY
+        );
+        const finalizedBlock =
+          finalEndMin === existing.endMin
+            ? existing
+            : {
+                ...existing,
+                endMin: finalEndMin,
+              };
+
+        if (finalizedBlock.endMin !== existing.endMin) {
+          await updateBlock(finalizedBlock, currentActiveDoneBlock.dayKey);
+        }
+
+        await persistActiveDoneBlock(null);
+
+        if (currentActiveDoneBlock.dayKey === dayKey) {
+          const refreshedBlocks = await getBlocksForDay(dayKey);
+          setBlocks(sortByStartMin(refreshedBlocks));
+        }
+
+        return finalizedBlock;
+      } finally {
+        activeDoneMutationInFlightRef.current = false;
+      }
+    },
+    [dayKey, persistActiveDoneBlock]
+  );
+
+  useEffect(() => {
+    if (!activeDoneBlock || activeDoneBlock.dayKey >= todayDayKey) {
+      return;
+    }
+
+    void finalizeActiveDoneBlock({ finalMinute: MINUTES_PER_DAY });
+  }, [activeDoneBlock, finalizeActiveDoneBlock, todayDayKey]);
+
   const openCreateEditor = useCallback(
     (lane: Lane, presetRange?: { startMin: number; endMin: number }) => {
+      setEditorSessionKey((current) => current + 1);
       setLastUsedCreateLane(lane);
       const defaultStart = getNextQuarterMinuteFromNow();
       const startMin = presetRange?.startMin ?? clamp(roundTo15(defaultStart), 0, MINUTES_PER_DAY - 15);
@@ -1379,8 +1518,20 @@ export default function DayTimeline() {
   );
 
   const openEditEditor = useCallback((block: TimeBlock) => {
+    setEditorSessionKey((current) => current + 1);
     const dayOfWeek = dayKeyToLocalDate(dayKey)?.getDay() ?? 0;
     const repeatRule = block.repeatRule ?? null;
+    const isActiveBlock =
+      activeDoneBlockRef.current?.dayKey === dayKey &&
+      activeDoneBlockRef.current.blockId === block.id;
+    const shownEndMin = isActiveBlock
+      ? getActiveDoneBlockEffectiveEndMin(
+          block.startMin,
+          block.endMin,
+          getCurrentMinute(),
+          true
+        )
+      : block.endMin;
     setEditorState({
       visible: true,
       mode: 'edit',
@@ -1389,7 +1540,7 @@ export default function DayTimeline() {
       title: block.title,
       tags: toSingleCategory(block.tags),
       startText: formatHHMM(block.startMin),
-      endText: formatHHMM(block.endMin),
+      endText: formatHHMM(shownEndMin),
       repeatPreset: block.recurrenceId ? repeatRule?.preset ?? 'weekly' : 'none',
       repeatIntervalText: String(repeatRule?.interval ?? 1),
       repeatWeekDays: normalizeWeekDays(repeatRule?.weekDays ?? [dayOfWeek], dayOfWeek),
@@ -1403,6 +1554,23 @@ export default function DayTimeline() {
       errorText: null,
     });
   }, [dayKey]);
+
+  useEffect(() => {
+    const pendingBlockId = pendingStartNowEditorBlockIdRef.current;
+
+    if (!pendingBlockId) {
+      return;
+    }
+
+    const pendingBlock = storedBlocks.find((block) => block.id === pendingBlockId);
+
+    if (!pendingBlock) {
+      return;
+    }
+
+    pendingStartNowEditorBlockIdRef.current = null;
+    openEditEditor(pendingBlock);
+  }, [openEditEditor, storedBlocks]);
 
   const goToPreviousDay = useCallback(() => {
     closeEditor();
@@ -1476,7 +1644,7 @@ export default function DayTimeline() {
 
   const handleDragEnd = useCallback(
     (blockId: string, proposedStartMin: number) => {
-      const draggedBlock = sortedBlocks.find((block) => block.id === blockId);
+      const draggedBlock = storedBlocks.find((block) => block.id === blockId);
 
       if (!draggedBlock) {
         return;
@@ -1514,6 +1682,13 @@ export default function DayTimeline() {
 
       void (async () => {
         try {
+          if (
+            draggedBlock.lane === 'done' &&
+            activeDoneBlockRef.current?.dayKey === dayKey
+          ) {
+            await finalizeActiveDoneBlock();
+          }
+
           await updateBlock(updatedBlock, dayKey);
           setBlocks((current) =>
             sortByStartMin(current.map((block) => (block.id === blockId ? updatedBlock : block)))
@@ -1529,7 +1704,7 @@ export default function DayTimeline() {
         }
       })();
     },
-    [dayKey, showFeedback, sortedBlocks]
+    [dayKey, finalizeActiveDoneBlock, showFeedback, sortedBlocks, storedBlocks]
   );
 
   const handleBlockPress = useCallback(
@@ -1538,7 +1713,12 @@ export default function DayTimeline() {
         return;
       }
 
-      const block = sortedBlocks.find((item) => item.id === blockId);
+      if (activeDoneMutationInFlightRef.current) {
+        showFeedback('Updating active block...');
+        return;
+      }
+
+      const block = storedBlocks.find((item) => item.id === blockId);
 
       if (!block) {
         return;
@@ -1546,7 +1726,7 @@ export default function DayTimeline() {
 
       openEditEditor(block);
     },
-    [activeDragId, isCreatingDraft, openEditEditor, sortedBlocks]
+    [activeDragId, isCreatingDraft, openEditEditor, showFeedback, storedBlocks]
   );
 
   const handleBlockFocusStart = useCallback(
@@ -1613,6 +1793,13 @@ export default function DayTimeline() {
     const runDelete = (scope: SeriesEditScope) => {
       void (async () => {
         try {
+          if (
+            existing.lane === 'done' &&
+            activeDoneBlockRef.current?.dayKey === dayKey
+          ) {
+            await finalizeActiveDoneBlock();
+          }
+
           if (scope === 'this' || !existing.recurrenceId) {
             await deleteBlock(existing.id);
             setBlocks((current) => current.filter((block) => block.id !== existing.id));
@@ -1675,7 +1862,7 @@ export default function DayTimeline() {
         onPress: () => runDelete('this'),
       },
     ]);
-  }, [closeEditor, dayKey, editorState.blockId, editorState.mode, sortedBlocks]);
+  }, [closeEditor, dayKey, editorState.blockId, editorState.mode, finalizeActiveDoneBlock, sortedBlocks]);
 
   const copyPlannedBlockToDone = useCallback(
     (plannedBlockId: string, options?: { closeEditorOnSuccess?: boolean }) => {
@@ -1720,6 +1907,10 @@ export default function DayTimeline() {
       planCheckboxMutationInFlightRef.current.add(plannedBlockId);
       void (async () => {
         try {
+          if (activeDoneBlockRef.current?.dayKey === dayKey) {
+            await finalizeActiveDoneBlock();
+          }
+
           const insertedBlock = await insertBlock(
             {
               lane: 'done',
@@ -1743,7 +1934,7 @@ export default function DayTimeline() {
         }
       })();
     },
-    [closeEditor, copiedPlannedIdSet, dayKey, showFeedback, sortedBlocks]
+    [closeEditor, copiedPlannedIdSet, dayKey, finalizeActiveDoneBlock, showFeedback, sortedBlocks]
   );
 
   const removePlannedBlockFromDone = useCallback(
@@ -1765,6 +1956,10 @@ export default function DayTimeline() {
       planCheckboxMutationInFlightRef.current.add(plannedBlockId);
       void (async () => {
         try {
+          if (activeDoneBlockRef.current?.dayKey === dayKey) {
+            await finalizeActiveDoneBlock();
+          }
+
           await Promise.all(linkedDoneBlocks.map((block) => deleteBlock(block.id)));
           setBlocks((current) =>
             sortByStartMin(
@@ -1782,7 +1977,7 @@ export default function DayTimeline() {
         }
       })();
     },
-    [showFeedback, sortedBlocks]
+    [dayKey, finalizeActiveDoneBlock, showFeedback, sortedBlocks]
   );
 
   const handleCopyPlannedToDoneFromEditor = useCallback(() => {
@@ -1805,8 +2000,8 @@ export default function DayTimeline() {
     [copiedPlannedIdSet, copyPlannedBlockToDone, removePlannedBlockFromDone]
   );
 
-  const handleSaveEditor = useCallback(() => {
-    const title = editorState.title.trim();
+  const handleSaveEditor = useCallback((overrides?: { title?: string }) => {
+    const title = (overrides?.title ?? editorState.title).trim();
 
     if (title.length === 0) {
       Alert.alert('Missing title', 'Title cannot be empty.');
@@ -1831,6 +2026,19 @@ export default function DayTimeline() {
       editorState.linkedPlannedId && plannedLinkOptions.some((option) => option.id === editorState.linkedPlannedId)
         ? editorState.linkedPlannedId
         : null;
+    const existingStoredBlock =
+      editorState.mode === 'edit' && editorState.blockId
+        ? storedBlocks.find((block) => block.id === editorState.blockId) ?? null
+        : null;
+    const currentActiveDoneBlock = activeDoneBlockRef.current;
+    const isEditingActiveDoneBlock =
+      editorState.mode === 'edit' &&
+      editorState.lane === 'done' &&
+      existingStoredBlock?.lane === 'done' &&
+      currentActiveDoneBlock?.dayKey === dayKey &&
+      currentActiveDoneBlock.blockId === existingStoredBlock.id;
+    const touchesDoneLane =
+      editorState.lane === 'done' || existingStoredBlock?.lane === 'done';
 
     if (startMin < 0 || endMin > MINUTES_PER_DAY || endMin <= startMin) {
       setEditorState((current) => ({
@@ -1846,7 +2054,7 @@ export default function DayTimeline() {
         return;
       }
 
-      const existing = sortedBlocks.find((block) => block.id === editorState.blockId);
+      const existing = existingStoredBlock;
 
       if (!existing) {
         setEditorState((current) => ({ ...current, errorText: 'Block not found.' }));
@@ -1856,6 +2064,17 @@ export default function DayTimeline() {
       const runEdit = (scope: SeriesEditScope) => {
         void (async () => {
           try {
+            let blocksForSelectedDay = sortedBlocks;
+
+            if (
+              touchesDoneLane &&
+              activeDoneBlockRef.current?.dayKey === dayKey &&
+              !isEditingActiveDoneBlock
+            ) {
+              await finalizeActiveDoneBlock();
+              blocksForSelectedDay = sortByStartMin(await getBlocksForDay(dayKey));
+            }
+
             const linkedPlannedIdForSingle = editorState.lane === 'done' ? normalizedLinkedPlannedId : undefined;
             const shouldConvertSingleBlockToSeries =
               !existing.recurrenceId && editorState.repeatPreset !== 'none';
@@ -1894,7 +2113,7 @@ export default function DayTimeline() {
               );
               const includesCurrentDay = repeatDayIndexByKey.has(dayKey);
               const dayBlocksCache = new Map<string, TimeBlock[]>();
-              dayBlocksCache.set(dayKey, sortedBlocks);
+              dayBlocksCache.set(dayKey, blocksForSelectedDay);
 
               for (const targetDayKey of repeatBuild.dayKeys) {
                 let dayBlocks = dayBlocksCache.get(targetDayKey);
@@ -1978,20 +2197,40 @@ export default function DayTimeline() {
             }
 
             if (scope === 'this' || !existing.recurrenceId) {
+              if (isEditingActiveDoneBlock && startMin > getCurrentMinute()) {
+                setEditorState((current) => ({
+                  ...current,
+                  errorText: 'Active block cannot start in the future.',
+                }));
+                return;
+              }
+
+              const persistedEndMin = isEditingActiveDoneBlock
+                ? Math.min(endMin, Math.max(startMin + 1, getCurrentMinute()))
+                : endMin;
               const updatedBlock: TimeBlock = {
                 ...existing,
                 lane: editorState.lane,
                 title,
                 tags: nextTags,
                 startMin,
-                endMin,
+                endMin: persistedEndMin,
                 linkedPlannedId: linkedPlannedIdForSingle,
                 recurrenceId: existing.recurrenceId ? null : existing.recurrenceId ?? null,
                 recurrenceIndex: existing.recurrenceId ? null : existing.recurrenceIndex ?? null,
                 repeatRule: null,
               };
 
-              if (hasOverlap(updatedBlock.lane, existing.id, startMin, endMin, sortedBlocks)) {
+              const effectiveEndMin = isEditingActiveDoneBlock
+                ? getActiveDoneBlockEffectiveEndMin(
+                    startMin,
+                    persistedEndMin,
+                    getCurrentMinute(),
+                    true
+                  )
+                : endMin;
+
+              if (hasOverlap(updatedBlock.lane, existing.id, startMin, effectiveEndMin, blocksForSelectedDay)) {
                 Alert.alert('Invalid time', 'Time overlaps another block.');
                 return;
               }
@@ -2040,7 +2279,10 @@ export default function DayTimeline() {
               for (const target of targetBlocks) {
                 let dayBlocks = dayBlocksCache.get(target.dayKey);
                 if (!dayBlocks) {
-                  dayBlocks = target.dayKey === dayKey ? sortedBlocks : await getBlocksForDay(target.dayKey);
+                  dayBlocks =
+                    target.dayKey === dayKey
+                      ? blocksForSelectedDay
+                      : await getBlocksForDay(target.dayKey);
                   dayBlocksCache.set(target.dayKey, dayBlocks);
                 }
 
@@ -2125,7 +2367,10 @@ export default function DayTimeline() {
             for (const targetDayKey of rebuiltRepeatBuild.dayKeys) {
               let dayBlocks = dayBlocksCache.get(targetDayKey);
               if (!dayBlocks) {
-                dayBlocks = targetDayKey === dayKey ? sortedBlocks : await getBlocksForDay(targetDayKey);
+                dayBlocks =
+                  targetDayKey === dayKey
+                    ? blocksForSelectedDay
+                    : await getBlocksForDay(targetDayKey);
                 dayBlocksCache.set(targetDayKey, dayBlocks);
               }
 
@@ -2237,14 +2482,22 @@ export default function DayTimeline() {
     }
 
     void (async () => {
-      const blocksByDayCache = new Map<string, TimeBlock[]>();
-      blocksByDayCache.set(dayKey, sortedBlocks);
       const insertedBlocksOnCurrentDay: TimeBlock[] = [];
       let insertedCount = 0;
       let skippedCount = 0;
       const recurrenceId = editorState.repeatPreset === 'none' ? null : createRecurrenceId();
 
       try {
+        let blocksForSelectedDay = sortedBlocks;
+
+        if (touchesDoneLane && activeDoneBlockRef.current?.dayKey === dayKey) {
+          await finalizeActiveDoneBlock();
+          blocksForSelectedDay = sortByStartMin(await getBlocksForDay(dayKey));
+        }
+
+        const blocksByDayCache = new Map<string, TimeBlock[]>();
+        blocksByDayCache.set(dayKey, blocksForSelectedDay);
+
         for (let index = 0; index < repeatBuild.dayKeys.length; index += 1) {
           const targetDayKey = repeatBuild.dayKeys[index];
           let dayBlocks = blocksByDayCache.get(targetDayKey);
@@ -2312,15 +2565,23 @@ export default function DayTimeline() {
         Alert.alert('Storage error', insertedCount > 0 ? 'Some blocks were created before an error.' : 'Could not create block.');
       }
     })();
-  }, [closeEditor, dayKey, editorState, plannedLinkOptions, showFeedback, sortedBlocks]);
+  }, [
+    closeEditor,
+    dayKey,
+    editorState,
+    finalizeActiveDoneBlock,
+    plannedLinkOptions,
+    showFeedback,
+    sortedBlocks,
+    storedBlocks,
+  ]);
 
   const isEditorSaveDisabled = useMemo(() => {
-    const titleValid = editorState.title.trim().length > 0;
     const hasCategory = editorState.tags.length > 0;
     const parsedStart = parseHHMM(editorState.startText);
     const parsedEnd = parseHHMM(editorState.endText);
 
-    if (!titleValid || !hasCategory || parsedStart === null || parsedEnd === null) {
+    if (!hasCategory || parsedStart === null || parsedEnd === null) {
       return true;
     }
 
@@ -2681,6 +2942,87 @@ export default function DayTimeline() {
     setSelectedLane('done');
   }, []);
 
+  const handleStartNow = useCallback(() => {
+    if (activeDoneMutationInFlightRef.current) {
+      showFeedback('Updating active block...');
+      return;
+    }
+
+    closeEditor();
+
+    void (async () => {
+      try {
+        const liveTodayDayKey = getLocalDayKey();
+        const nowMin = getCurrentMinute();
+        const currentActiveDoneBlock = activeDoneBlockRef.current;
+        const hadActiveDoneBlock = currentActiveDoneBlock !== null;
+        let startMin = nowMin;
+
+        if (hadActiveDoneBlock) {
+          const finalizedBlock = await finalizeActiveDoneBlock({
+            finalMinute:
+              currentActiveDoneBlock?.dayKey === liveTodayDayKey
+                ? nowMin
+                : MINUTES_PER_DAY,
+          });
+
+          if (finalizedBlock && currentActiveDoneBlock?.dayKey === liveTodayDayKey) {
+            startMin = finalizedBlock.endMin;
+          }
+        }
+
+        const insertedBlock = await insertBlock(
+          {
+            lane: 'done',
+            title: '',
+            tags: [],
+            startMin,
+            endMin: Math.min(MINUTES_PER_DAY, startMin + 1),
+            linkedPlannedId: null,
+          },
+          liveTodayDayKey
+        );
+
+        await persistActiveDoneBlock({
+          blockId: insertedBlock.id,
+          dayKey: liveTodayDayKey,
+        });
+
+        if (laneVisibility.done) {
+          setSelectedLane('done');
+        } else {
+          setViewMode('done');
+        }
+
+        if (dayKey === liveTodayDayKey) {
+          setBlocks((current) => sortByStartMin([...current, insertedBlock]));
+          openEditEditor(insertedBlock);
+          scrollToNow(true);
+        } else {
+          pendingStartNowEditorBlockIdRef.current = insertedBlock.id;
+          pendingJumpToNowRef.current = true;
+          autoScrolledDayKeyRef.current = null;
+          setDayKey(liveTodayDayKey);
+        }
+
+        void triggerSuccessHaptic();
+        showFeedback(hadActiveDoneBlock ? 'Started next activity.' : 'Started now.');
+      } catch {
+        Alert.alert('Storage error', 'Could not start logging now.');
+      }
+    })();
+  }, [
+    closeEditor,
+    dayKey,
+    finalizeActiveDoneBlock,
+    laneVisibility.done,
+    persistActiveDoneBlock,
+    openEditEditor,
+    scrollToNow,
+    setViewMode,
+    showFeedback,
+  ]);
+
   const handleSelectCalendarDay = useCallback(
     (nextDayKey: string) => {
       setDayKey(nextDayKey);
@@ -2901,6 +3243,28 @@ export default function DayTimeline() {
                 );
               })}
             </View>
+            <Pressable
+              accessibilityLabel="Start activity now"
+              accessibilityRole="button"
+              style={[
+                styles.startNowButton,
+                activeDoneBlock && styles.startNowButtonActive,
+              ]}
+              onPress={handleStartNow}>
+              <View
+                style={[
+                  styles.startNowDot,
+                  activeDoneBlock && styles.startNowDotActive,
+                ]}
+              />
+              <Text
+                style={[
+                  styles.startNowButtonText,
+                  activeDoneBlock && styles.startNowButtonTextActive,
+                ]}>
+                Start Now
+              </Text>
+            </Pressable>
           </View>
 
           <View style={styles.headerRow}>
@@ -2971,35 +3335,41 @@ export default function DayTimeline() {
                     {hourLineOffsets.map((top, index) => {
                       return <View key={index} style={[styles.hourLine, { top }]} />;
                     })}
-                    {renderedLaneBlocks[lane].map(({ block, dimmed }) => (
-                    <Block
-                      key={block.id}
-                      id={block.id}
-                      startMin={block.startMin}
-                      endMin={block.endMin}
-                      previewStartMin={dragPreviewById[block.id]?.startMin}
-                      previewEndMin={dragPreviewById[block.id]?.endMin}
-                      title={block.title}
-                      tags={block.tags}
-                      lane={block.lane}
-                      onPress={handleBlockPress}
-                      onDragStart={handleDragStart}
-                      onDragEnd={handleDragEnd}
-                      onDragRelease={handleDragRelease}
-                      onDragStep={handleDragStep}
-                      onDragPreview={handleDragPreview}
-                      onFocusStart={handleBlockFocusStart}
-                      onFocusEnd={handleBlockFocusEnd}
-                      showCopyCheckbox={block.lane === 'planned'}
-                      copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
-                      onCopyCheckboxPress={handlePlanCheckboxPress}
-                      categoryColorMap={categoryColorMap}
-                      categoryLabelMap={categoryLabelMap}
-                      interactive={!dimmed && !isPinching}
-                      dimmed={dimmed}
-                      pixelsPerMinute={pixelsPerMinute}
-                    />
-                    ))}
+                    {renderedLaneBlocks[lane].map(({ block, dimmed }) => {
+                      const isActiveBlock = activeDoneBlockIdForDay === block.id;
+
+                      return (
+                        <Block
+                          key={block.id}
+                          id={block.id}
+                          startMin={block.startMin}
+                          endMin={block.endMin}
+                          previewStartMin={dragPreviewById[block.id]?.startMin}
+                          previewEndMin={dragPreviewById[block.id]?.endMin}
+                          title={block.title}
+                          tags={block.tags}
+                          lane={block.lane}
+                          onPress={handleBlockPress}
+                          onDragStart={handleDragStart}
+                          onDragEnd={handleDragEnd}
+                          onDragRelease={handleDragRelease}
+                          onDragStep={handleDragStep}
+                          onDragPreview={handleDragPreview}
+                          onFocusStart={handleBlockFocusStart}
+                          onFocusEnd={handleBlockFocusEnd}
+                          showCopyCheckbox={block.lane === 'planned'}
+                          copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
+                          onCopyCheckboxPress={handlePlanCheckboxPress}
+                          categoryColorMap={categoryColorMap}
+                          categoryLabelMap={categoryLabelMap}
+                          interactive={!dimmed && !isPinching}
+                          dragEnabled={!isActiveBlock}
+                          dimmed={dimmed}
+                          isActive={isActiveBlock}
+                          pixelsPerMinute={pixelsPerMinute}
+                        />
+                      );
+                    })}
                     {draftCreate && selectedLane === lane ? (
                       <View
                         pointerEvents="none"
@@ -3035,35 +3405,41 @@ export default function DayTimeline() {
                   return <View key={index} style={[styles.hourLine, { top }]} />;
                 })}
 
-                {renderedLaneBlocks[selectedLane].map(({ block, dimmed }) => (
-                  <Block
-                    key={block.id}
-                    id={block.id}
-                    startMin={block.startMin}
-                    endMin={block.endMin}
-                    previewStartMin={dragPreviewById[block.id]?.startMin}
-                    previewEndMin={dragPreviewById[block.id]?.endMin}
-                    title={block.title}
-                    tags={block.tags}
-                    lane={block.lane}
-                    onPress={handleBlockPress}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    onDragRelease={handleDragRelease}
-                    onDragStep={handleDragStep}
-                    onDragPreview={handleDragPreview}
-                    onFocusStart={handleBlockFocusStart}
-                    onFocusEnd={handleBlockFocusEnd}
-                    showCopyCheckbox={block.lane === 'planned'}
-                    copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
-                    onCopyCheckboxPress={handlePlanCheckboxPress}
-                    categoryColorMap={categoryColorMap}
-                    categoryLabelMap={categoryLabelMap}
-                    interactive={!dimmed && !isPinching}
-                    dimmed={dimmed}
-                    pixelsPerMinute={pixelsPerMinute}
-                  />
-                ))}
+                {renderedLaneBlocks[selectedLane].map(({ block, dimmed }) => {
+                  const isActiveBlock = activeDoneBlockIdForDay === block.id;
+
+                  return (
+                    <Block
+                      key={block.id}
+                      id={block.id}
+                      startMin={block.startMin}
+                      endMin={block.endMin}
+                      previewStartMin={dragPreviewById[block.id]?.startMin}
+                      previewEndMin={dragPreviewById[block.id]?.endMin}
+                      title={block.title}
+                      tags={block.tags}
+                      lane={block.lane}
+                      onPress={handleBlockPress}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                      onDragRelease={handleDragRelease}
+                      onDragStep={handleDragStep}
+                      onDragPreview={handleDragPreview}
+                      onFocusStart={handleBlockFocusStart}
+                      onFocusEnd={handleBlockFocusEnd}
+                      showCopyCheckbox={block.lane === 'planned'}
+                      copyCheckboxChecked={copiedPlannedIdSet.has(block.id)}
+                      onCopyCheckboxPress={handlePlanCheckboxPress}
+                      categoryColorMap={categoryColorMap}
+                      categoryLabelMap={categoryLabelMap}
+                      interactive={!dimmed && !isPinching}
+                      dragEnabled={!isActiveBlock}
+                      dimmed={dimmed}
+                      isActive={isActiveBlock}
+                      pixelsPerMinute={pixelsPerMinute}
+                    />
+                  );
+                })}
 
                 {draftCreate ? (
                   <View
@@ -3106,6 +3482,7 @@ export default function DayTimeline() {
 
       <BlockEditorModal
         visible={editorState.visible}
+        editorSessionKey={editorSessionKey}
         mode={editorState.mode}
         showRepeatControls
         lane={editorState.lane}
@@ -3492,16 +3869,53 @@ function createStyles(colors: UIColors, isDark: boolean) {
       opacity: 0.5,
     },
     topControlRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
       marginBottom: 6,
     },
     dayContent: {
       flex: 1,
     },
     segmentedControl: {
+      flex: 1,
       flexDirection: 'row',
       backgroundColor: colors.surfaceMuted,
       borderRadius: 10,
       padding: 1.5,
+    },
+    startNowButton: {
+      minHeight: 34,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      backgroundColor: `${colors.done}14`,
+      borderWidth: 1,
+      borderColor: `${colors.done}40`,
+    },
+    startNowButtonActive: {
+      backgroundColor: colors.done,
+      borderColor: colors.done,
+    },
+    startNowDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: colors.done,
+    },
+    startNowDotActive: {
+      backgroundColor: theme.accentText,
+    },
+    startNowButtonText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.done,
+    },
+    startNowButtonTextActive: {
+      color: theme.accentText,
     },
     segmentButton: {
       flex: 1,
