@@ -65,7 +65,7 @@ Last updated: April 22, 2026
 
 ## 11) QA
 - COMPLETE: Core flow testing guidance captured in review notes template.
-- COMPLETE: Repo now includes an EAS iOS update path in [ios-update-runbook.md](./ios-update-runbook.md).
+- COMPLETE: Repo now includes a local Xcode iOS update path in [ios-update-runbook.md](./ios-update-runbook.md).
 - MANUAL: Run fresh install + upgrade install checks before submit.
 - MANUAL: Run slow/offline behavior checks on target devices.
 - MANUAL: Run iPhone + iPad pass and capture evidence.
@@ -90,7 +90,7 @@ Last updated: April 22, 2026
 - MANUAL: Set up rapid response process for App Review messages.
 
 ## Remaining actions requiring your input
-1. Build and submit the `1.0.1` update using [ios-update-runbook.md](./ios-update-runbook.md).
+1. Build and submit the `1.0.1 (2)` update using [ios-update-runbook.md](./ios-update-runbook.md).
 2. Submit the exact public Privacy Policy URL in App Store Connect.
 3. Verify support inbox monitoring process is active for App Review and production.
 4. Complete remaining App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
