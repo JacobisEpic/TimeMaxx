@@ -1,6 +1,6 @@
 # Exhaustive App Store Pre-Submit Checklist (iOS)
 
-Last updated: March 18, 2026 (America/New_York)
+Last updated: April 22, 2026 (America/New_York)
 
 Use this list right before shipping `TimeMaxx` to the App Store.
 
@@ -32,7 +32,9 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 - [ ] Bundle ID is correct: `com.timemaxx.app`.
 - [ ] Display name is correct: `TimeMaxx`.
 - [ ] Marketing version (`CFBundleShortVersionString`) is set for this release.
-- [ ] Build number (`CFBundleVersion`) incremented from prior upload.
+- [ ] Repo version is staged to the intended release (`1.0.1` for this update).
+- [ ] iOS build number (`CFBundleVersion`) will increment from the prior upload.
+- [ ] If using the repo's EAS production flow, confirm `eas.json` remote auto-increment is enabled instead of hand-editing a local build number.
 - [ ] Automatic signing works with the correct Apple team.
 - [ ] Archive builds without signing/provisioning errors.
 
@@ -69,6 +71,7 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 - [ ] App Privacy questionnaire completed in App Store Connect.
 - [ ] App Privacy answers match actual data practices in code and SDKs.
 - [ ] Export compliance questions answered for the build.
+- [ ] `ITSAppUsesNonExemptEncryption=false` in `app.json` still matches actual app behavior.
 - [ ] If needed, encryption documentation uploaded and approved.
 - [ ] Age rating questionnaire completed under the current rating system.
 - [ ] Content rights confirmed for all assets (icons, fonts, images, copy).
@@ -97,7 +100,11 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 - [ ] Notes call out anything non-obvious (permissions, edge cases).
 - [ ] Optional short demo video link included.
 
-## 9) Archive and upload (Xcode)
+## 9) Build and upload (preferred EAS, fallback Xcode)
+
+- [ ] Preferred: run `npm run release:ios` for the store build.
+- [ ] If using EAS, confirm the build finishes under the `production` profile.
+- [ ] If using EAS, run `npm run release:ios:submit` after processing completes.
 
 - [ ] In Xcode, set scheme to `Any iOS Device (arm64)` for archive.
 - [ ] Create archive from Release configuration.
@@ -124,12 +131,16 @@ Use this list right before shipping `TimeMaxx` to the App Store.
 
 ## 12) Repo-specific values to verify each release
 
-- [ ] `app.json` version and iOS bundle identifier are correct.
+- [ ] `app.json` version is correct for the App Store version being submitted.
+- [ ] `package.json` version matches `app.json`.
+- [ ] `app.json` iOS bundle identifier is correct.
+- [ ] `eas.json` points to App Store Connect app `6760919064`.
 - [ ] `src/constants/releaseMetadata.ts` support email is production-ready.
 - [ ] `src/constants/releaseMetadata.ts` public URLs are production-ready.
 - [ ] Existing docs are current:
   - [ ] `docs/app-store/submission-checklist.md`
   - [ ] `docs/app-store/review-notes-template.md`
+  - [ ] `docs/app-store/ios-update-runbook.md`
   - [ ] `CUSTOMER-UAT.md`
 
 ## 13) Optional but recommended risk controls

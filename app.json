@@ -2,7 +2,7 @@
   "expo": {
     "name": "TimeMaxx",
     "slug": "timemaxx",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "scheme": "timemaxx",
     "userInterfaceStyle": "automatic",
@@ -10,7 +10,10 @@
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.timemaxx.app"
+      "bundleIdentifier": "com.timemaxx.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "edgeToEdgeEnabled": true,

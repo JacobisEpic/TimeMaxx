@@ -1,6 +1,6 @@
 # App Store Submission Checklist Status
 
-Last updated: March 20, 2026
+Last updated: April 22, 2026
 
 ## Legend
 - COMPLETE: Implemented in this repository or confirmed in app behavior.
@@ -29,7 +29,8 @@ Last updated: March 20, 2026
 - MANUAL: Paid Apps Agreement status.
 - MANUAL: Tax forms status.
 - MANUAL: Banking status.
-- MANUAL: Export compliance answers in App Store Connect.
+- COMPLETE: `ITSAppUsesNonExemptEncryption` is set to `false` in `app.json` for the current app scope.
+- MANUAL: Confirm App Store Connect export compliance answers still match the shipped build.
 
 ## 4) App listing setup
 - MANUAL: Age rating questionnaire.
@@ -64,6 +65,7 @@ Last updated: March 20, 2026
 
 ## 11) QA
 - COMPLETE: Core flow testing guidance captured in review notes template.
+- COMPLETE: Repo now includes an EAS iOS update path in [ios-update-runbook.md](./ios-update-runbook.md).
 - MANUAL: Run fresh install + upgrade install checks before submit.
 - MANUAL: Run slow/offline behavior checks on target devices.
 - MANUAL: Run iPhone + iPad pass and capture evidence.
@@ -88,7 +90,8 @@ Last updated: March 20, 2026
 - MANUAL: Set up rapid response process for App Review messages.
 
 ## Remaining actions requiring your input
-1. Submit the exact public Privacy Policy URL in App Store Connect.
-2. Verify support inbox monitoring process is active for App Review and production.
-3. Complete App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
-4. Produce and upload final App Store listing copy + screenshots.
+1. Build and submit the `1.0.1` update using [ios-update-runbook.md](./ios-update-runbook.md).
+2. Submit the exact public Privacy Policy URL in App Store Connect.
+3. Verify support inbox monitoring process is active for App Review and production.
+4. Complete remaining App Store Connect configuration items (privacy label, age rating, pricing, agreements, tax, banking, export compliance).
+5. Produce and upload final App Store listing copy + screenshots.

@@ -72,6 +72,7 @@ npm run release:check
 ```
 
 ## Docs
+- [iOS App Store update runbook](./docs/app-store/ios-update-runbook.md)
 - [App Store submission checklist](./docs/app-store/submission-checklist.md)
 - [App Store review notes template](./docs/app-store/review-notes-template.md)
 - [Exhaustive pre-submit checklist](./docs/app-store/exhaustive-pre-submit-checklist.md)
