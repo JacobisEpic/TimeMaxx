@@ -2,7 +2,7 @@
   "name": "timemaxx",
   "description": "Local-first iPhone app for planning, tracking, and reviewing time on a visual timeline.",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -12,7 +12,10 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "prebuild:check": "expo config --type prebuild >/dev/null",
-    "release:check": "npm run lint && npm run typecheck && npm test && npm run prebuild:check"
+    "release:check": "npm run lint && npm run typecheck && npm test && npm run prebuild:check",
+    "release:ios": "npm run release:check && npx eas-cli build --platform ios --profile production",
+    "release:ios:build": "npx eas-cli build --platform ios --profile production",
+    "release:ios:submit": "npx eas-cli submit --platform ios --profile production --latest"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

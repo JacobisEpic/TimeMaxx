@@ -2655,6 +2655,7 @@ export default function DayTimeline() {
     dayKey,
     editorState,
     finalizeActiveDoneBlock,
+    latestDoneBlockIdForDay,
     plannedLinkOptions,
     persistActiveDoneBlock,
     showFeedback,

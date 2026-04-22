@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { APP_WEBSITE_URL, LEGAL_DOCUMENTS, type LegalDocumentKey, SUPPORT_EMAIL } from '@/src/constants/legal';
@@ -644,6 +645,16 @@ export default function SettingsScreen() {
     () => buildCalendarDayCells(copyPlanCalendarMonthStart),
     [copyPlanCalendarMonthStart]
   );
+  const appVersionLabel = useMemo(() => {
+    const marketingVersion = Constants.expoConfig?.version?.trim();
+    const buildNumber = Constants.expoConfig?.ios?.buildNumber?.trim();
+
+    if (!marketingVersion) {
+      return null;
+    }
+
+    return buildNumber ? `App version ${marketingVersion} (${buildNumber})` : `App version ${marketingVersion}`;
+  }, []);
   const visibleCategoryIdSet = useMemo(
     () => new Set(settings.visibleCategoryIds.map((id) => id.toLowerCase())),
     [settings.visibleCategoryIds]
@@ -1686,6 +1697,7 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Legal & Support</Text>
             <Text style={styles.toggleHint}>View policies and support info.</Text>
+            {appVersionLabel ? <Text style={styles.toggleHint}>{appVersionLabel}</Text> : null}
             <View style={styles.listGroup}>
               <Pressable
                 accessibilityLabel="Open TimeMaxx website"
