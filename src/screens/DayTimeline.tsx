@@ -133,7 +133,7 @@ const NOW_BUBBLE_HEIGHT = 20;
 const NOW_COLOR = '#FF3B30';
 const NOW_LINE_CONNECT_OFFSET = 4;
 const MIN_TIMELINE_ZOOM = 0.8;
-const MAX_TIMELINE_ZOOM = 12;
+const MAX_TIMELINE_ZOOM = 20;
 const PINCH_ZOOM_UPDATE_STEP = 0.003;
 const PINCH_INTENT_LOCK_THRESHOLD_PX = 12;
 const PINCH_VERTICAL_INTENT_RATIO = 1.2;
@@ -157,6 +157,7 @@ const CALENDAR_MONTH_LABEL_HEIGHT = 38;
 const CALENDAR_WEEKDAY_ROW_HEIGHT = 22;
 const CALENDAR_MONTH_BOTTOM_SPACE = 16;
 const DEFAULT_TIMELINE_ZOOM = 1;
+const NOW_FOCUS_VIEWPORT_RATIO = 0.25;
 const TIMELINE_ZOOM_META_KEY = 'settings_timeline_zoom';
 const LEGACY_TIMELINE_ZOOM_META_KEYS = [
   'settings_timeline_zoom_compare',
@@ -577,7 +578,6 @@ export default function DayTimeline() {
   const pinchPendingFocalYRef = useRef<number | null>(null);
   const pinchSmoothedFocalYRef = useRef<number | null>(null);
   const pinchTrackedFocalViewportYRef = useRef<number | null>(null);
-  const pinchAnchorMinuteRef = useRef<number | null>(null);
   const pinchRafIdRef = useRef<number | null>(null);
   const isPinchingRef = useRef(false);
   const zoomPrefsHydratedRef = useRef(false);
@@ -851,6 +851,21 @@ export default function DayTimeline() {
     });
   }, []);
 
+  const getTimelineScrollTargetForMinute = useCallback(
+    (minute: number, zoom: number) => {
+      const clampedMinute = clamp(minute, 0, MINUTES_PER_DAY);
+      const pixelsPerMinuteAtZoom = BASE_PIXELS_PER_MINUTE * Math.max(zoom, MIN_TIMELINE_ZOOM);
+      const viewportHeight = timelineViewportHeightRef.current;
+      const timelineHeight = MINUTES_PER_DAY * pixelsPerMinuteAtZoom + insets.bottom;
+      const maxScrollY = Math.max(0, timelineHeight - viewportHeight);
+      const targetScrollY =
+        clampedMinute * pixelsPerMinuteAtZoom - viewportHeight * NOW_FOCUS_VIEWPORT_RATIO;
+
+      return clamp(targetScrollY, 0, maxScrollY);
+    },
+    [insets.bottom]
+  );
+
   const minuteFromAbsoluteY = useCallback((absoluteY: number): number | null => {
     if (!Number.isFinite(absoluteY)) {
       return null;
@@ -923,7 +938,6 @@ export default function DayTimeline() {
     pinchVerticalIntentRef.current = false;
     pinchSmoothedFocalYRef.current = null;
     pinchTrackedFocalViewportYRef.current = null;
-    pinchAnchorMinuteRef.current = null;
   }, []);
 
   const trackPinchTouchData = useCallback(
@@ -1024,22 +1038,6 @@ export default function DayTimeline() {
     []
   );
 
-  const ensurePinchAnchorMinute = useCallback((focalY: number): number => {
-    const existingAnchorMinute = pinchAnchorMinuteRef.current;
-    if (existingAnchorMinute != null && Number.isFinite(existingAnchorMinute)) {
-      return existingAnchorMinute;
-    }
-
-    const startPixelsPerMinute = BASE_PIXELS_PER_MINUTE * Math.max(pinchStartZoomRef.current, 0.001);
-    const anchorMinute = clamp(
-      (timelineScrollOffsetYRef.current + focalY) / Math.max(startPixelsPerMinute, 0.001),
-      0,
-      MINUTES_PER_DAY
-    );
-    pinchAnchorMinuteRef.current = anchorMinute;
-    return anchorMinute;
-  }, []);
-
   const handlePinchZoomUpdate = useCallback(
     (gestureScale: number, focalY: number) => {
       if (!Number.isFinite(gestureScale) || gestureScale <= 0) {
@@ -1057,10 +1055,9 @@ export default function DayTimeline() {
       }
 
       pinchLastAppliedZoomRef.current = nextZoom;
-      const anchorMinute = ensurePinchAnchorMinute(focalY);
-      applyTimelineZoom(nextZoom, focalY, anchorMinute);
+      applyTimelineZoom(nextZoom, focalY);
     },
-    [applyTimelineZoom, ensurePinchAnchorMinute]
+    [applyTimelineZoom]
   );
 
   const handlePinchZoomFinalize = useCallback(
@@ -1075,11 +1072,10 @@ export default function DayTimeline() {
         MAX_TIMELINE_ZOOM
       );
       pinchLastAppliedZoomRef.current = nextZoom;
-      const anchorMinute = ensurePinchAnchorMinute(focalY);
-      applyTimelineZoom(nextZoom, focalY, anchorMinute);
+      applyTimelineZoom(nextZoom, focalY);
       persistTimelineZoom(nextZoom);
     },
-    [applyTimelineZoom, ensurePinchAnchorMinute, persistTimelineZoom]
+    [applyTimelineZoom, persistTimelineZoom]
   );
 
   const applyQueuedPinchZoom = useCallback(() => {
@@ -1137,7 +1133,6 @@ export default function DayTimeline() {
           pinchLastAppliedZoomRef.current = timelineZoomRef.current;
           pinchPendingGestureScaleRef.current = 1;
           pinchPendingFocalYRef.current = null;
-          pinchAnchorMinuteRef.current = null;
           cancelQueuedPinchZoom();
           resetPinchTracking();
         })
@@ -1305,9 +1300,10 @@ export default function DayTimeline() {
       return;
     }
 
-    const targetMinute =
-      dayKey === todayDayKey ? Math.max(0, nowMinute - 90) : 8 * 60;
-    const targetY = targetMinute * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
+    const targetY =
+      dayKey === todayDayKey
+        ? getTimelineScrollTargetForMinute(nowMinute, timelineZoomRef.current)
+        : 8 * 60 * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
 
     const timer = setTimeout(() => {
       timelineScrollRef.current?.scrollTo({ y: targetY, animated: false });
@@ -1316,7 +1312,7 @@ export default function DayTimeline() {
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [dayKey, nowMinute, todayDayKey]);
+  }, [dayKey, getTimelineScrollTargetForMinute, nowMinute, todayDayKey]);
 
   useEffect(() => {
     if (!pendingJumpToNowRef.current || dayKey !== todayDayKey) {
@@ -1324,7 +1320,7 @@ export default function DayTimeline() {
     }
 
     const timer = setTimeout(() => {
-      const targetY = Math.max(0, nowMinute - 90) * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
+      const targetY = getTimelineScrollTargetForMinute(nowMinute, timelineZoomRef.current);
       timelineScrollRef.current?.scrollTo({ y: targetY, animated: true });
       timelineScrollOffsetYRef.current = targetY;
       autoScrolledDayKeyRef.current = todayDayKey;
@@ -1332,7 +1328,7 @@ export default function DayTimeline() {
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [dayKey, nowMinute, todayDayKey]);
+  }, [dayKey, getTimelineScrollTargetForMinute, nowMinute, todayDayKey]);
 
   useEffect(() => {
     if (isPinchingRef.current) {
@@ -1579,12 +1575,12 @@ export default function DayTimeline() {
 
   const scrollToNow = useCallback(
     (animated: boolean) => {
-      const targetY = Math.max(0, nowMinute - 90) * (BASE_PIXELS_PER_MINUTE * timelineZoomRef.current);
+      const targetY = getTimelineScrollTargetForMinute(nowMinute, timelineZoomRef.current);
       timelineScrollRef.current?.scrollTo({ y: targetY, animated });
       timelineScrollOffsetYRef.current = targetY;
       autoScrolledDayKeyRef.current = todayDayKey;
     },
-    [nowMinute, todayDayKey]
+    [getTimelineScrollTargetForMinute, nowMinute, todayDayKey]
   );
 
   const handleDateChipPress = useCallback(() => {
