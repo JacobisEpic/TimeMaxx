@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   Modal,
@@ -299,6 +299,7 @@ export function BlockEditorModal({
   const [wheelPeriod, setWheelPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('AM');
   const [wheelDuration, setWheelDuration] = useState(60);
   const [draftTitle, setDraftTitle] = useState(titleValue);
+  const syncedPickerTypeRef = useRef<PickerType>(null);
 
   const resolvedCategoryOptions = useMemo(
     () => (categoryOptions.length ? categoryOptions : [...CATEGORY_OPTIONS]),
@@ -400,6 +401,11 @@ export function BlockEditorModal({
 
   useEffect(() => {
     if (pickerType === null) {
+      syncedPickerTypeRef.current = null;
+      return;
+    }
+
+    if (syncedPickerTypeRef.current === pickerType) {
       return;
     }
 
@@ -414,6 +420,7 @@ export function BlockEditorModal({
     setWheelMinuteToken(getCircularWheelToken(MINUTE_WHEEL_ITEMS, MINUTE_OPTIONS, minute));
     setWheelPeriod(period);
     setWheelDuration(timeState.durationMin);
+    syncedPickerTypeRef.current = pickerType;
   }, [pickerType, selectedEndHour, selectedEndMinute, selectedHour, selectedMinute, timeState.durationMin]);
 
   const applyStartAndDuration = (startMin: number, durationMin: number) => {
@@ -958,12 +965,8 @@ export function BlockEditorModal({
                     }
 
                     const value = Number(selectedItem.value);
-                    const centeredToken =
-                      selectedItem.repeatIndex === TIME_WHEEL_CENTER_REPEAT_INDEX
-                        ? selectedItem.token
-                        : getCircularWheelToken(HOUR_WHEEL_ITEMS, HOUR_OPTIONS, value);
                     setWheelHour(value);
-                    setWheelHourToken(centeredToken);
+                    setWheelHourToken(selectedItem.token);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', value, wheelMinute, wheelPeriod);
                   }}>
                   {HOUR_WHEEL_ITEMS.map((item) => (
@@ -981,12 +984,8 @@ export function BlockEditorModal({
                     }
 
                     const value = Number(selectedItem.value);
-                    const centeredToken =
-                      selectedItem.repeatIndex === TIME_WHEEL_CENTER_REPEAT_INDEX
-                        ? selectedItem.token
-                        : getCircularWheelToken(MINUTE_WHEEL_ITEMS, MINUTE_OPTIONS, value);
                     setWheelMinute(value);
-                    setWheelMinuteToken(centeredToken);
+                    setWheelMinuteToken(selectedItem.token);
                     applyWheelTime(pickerType === 'endTime' ? 'end' : 'start', wheelHour, value, wheelPeriod);
                   }}>
                   {MINUTE_WHEEL_ITEMS.map((item) => (
