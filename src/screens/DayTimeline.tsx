@@ -158,6 +158,7 @@ const CALENDAR_WEEKDAY_ROW_HEIGHT = 22;
 const CALENDAR_MONTH_BOTTOM_SPACE = 16;
 const DEFAULT_TIMELINE_ZOOM = 1;
 const NOW_FOCUS_VIEWPORT_RATIO = 0.25;
+const ACTIVE_BLOCK_EDIT_RESTRICTION_MESSAGE = 'Stop this block to edit.';
 const TIMELINE_ZOOM_META_KEY = 'settings_timeline_zoom';
 const LEGACY_TIMELINE_ZOOM_META_KEYS = [
   'settings_timeline_zoom_compare',
@@ -639,6 +640,16 @@ export default function DayTimeline() {
   const activeDoneBlockIdForDay = useMemo(
     () => (activeDoneBlock?.dayKey === dayKey ? activeDoneBlock.blockId : null),
     [activeDoneBlock, dayKey]
+  );
+  const isEditorActiveDoneBlock = useMemo(
+    () =>
+      editorState.visible &&
+      editorState.mode === 'edit' &&
+      editorState.lane === 'done' &&
+      editorState.blockId !== null &&
+      activeDoneBlock?.dayKey === dayKey &&
+      activeDoneBlock.blockId === editorState.blockId,
+    [activeDoneBlock, dayKey, editorState.blockId, editorState.lane, editorState.mode, editorState.visible]
   );
   const sortedBlocks = useMemo(
     () =>
@@ -1392,6 +1403,10 @@ export default function DayTimeline() {
     }, FEEDBACK_DURATION_MS);
   }, []);
 
+  const handleActiveEditRestriction = useCallback(() => {
+    showFeedback(ACTIVE_BLOCK_EDIT_RESTRICTION_MESSAGE);
+  }, [showFeedback]);
+
   const persistActiveDoneBlock = useCallback(async (nextActiveDoneBlock: ActiveDoneBlockMeta | null) => {
     if (nextActiveDoneBlock) {
       await setMetaValue(
@@ -2057,6 +2072,18 @@ export default function DayTimeline() {
         return;
       }
 
+      const effectiveLane = isEditingActiveDoneBlock ? existing.lane : editorState.lane;
+      const effectiveStartMin = isEditingActiveDoneBlock ? existing.startMin : startMin;
+      const effectivePersistedEndMin = isEditingActiveDoneBlock ? existing.endMin : endMin;
+      const linkedPlannedIdForSingle =
+        isEditingActiveDoneBlock
+          ? existing.lane === 'done'
+            ? existing.linkedPlannedId ?? null
+            : undefined
+          : editorState.lane === 'done'
+            ? normalizedLinkedPlannedId
+            : undefined;
+
       const runEdit = (scope: SeriesEditScope) => {
         void (async () => {
           try {
@@ -2071,9 +2098,8 @@ export default function DayTimeline() {
               blocksForSelectedDay = sortByStartMin(await getBlocksForDay(dayKey));
             }
 
-            const linkedPlannedIdForSingle = editorState.lane === 'done' ? normalizedLinkedPlannedId : undefined;
             const shouldConvertSingleBlockToSeries =
-              !existing.recurrenceId && editorState.repeatPreset !== 'none';
+              !isEditingActiveDoneBlock && !existing.recurrenceId && editorState.repeatPreset !== 'none';
 
             if (shouldConvertSingleBlockToSeries) {
               const recurringRule = buildRepeatRuleFromEditorState(editorState, dayKey);
@@ -2122,7 +2148,7 @@ export default function DayTimeline() {
                   targetDayKey === dayKey
                     ? dayBlocks.filter((block) => block.id !== existing.id)
                     : dayBlocks;
-                if (hasOverlap(editorState.lane, null, startMin, endMin, otherBlocks)) {
+                if (hasOverlap(effectiveLane, null, effectiveStartMin, effectivePersistedEndMin, otherBlocks)) {
                   Alert.alert('Invalid time', `One or more events would overlap on ${targetDayKey}.`);
                   return;
                 }
@@ -2134,12 +2160,12 @@ export default function DayTimeline() {
                 await updateBlock(
                   {
                     ...existing,
-                    lane: editorState.lane,
+                    lane: effectiveLane,
                     title,
                     tags: nextTags,
-                    startMin,
-                    endMin,
-                    linkedPlannedId: editorState.lane === 'done' ? null : undefined,
+                    startMin: effectiveStartMin,
+                    endMin: effectivePersistedEndMin,
+                    linkedPlannedId: effectiveLane === 'done' ? null : undefined,
                     recurrenceId: nextRecurrenceId,
                     recurrenceIndex: repeatDayIndexByKey.get(dayKey) ?? 1,
                     repeatRule: recurringRule,
@@ -2155,12 +2181,12 @@ export default function DayTimeline() {
 
                 await insertBlock(
                   {
-                    lane: editorState.lane,
+                    lane: effectiveLane,
                     title,
                     tags: nextTags,
-                    startMin,
-                    endMin,
-                    linkedPlannedId: editorState.lane === 'done' ? null : undefined,
+                    startMin: effectiveStartMin,
+                    endMin: effectivePersistedEndMin,
+                    linkedPlannedId: effectiveLane === 'done' ? null : undefined,
                     recurrenceId: nextRecurrenceId,
                     recurrenceIndex: repeatDayIndexByKey.get(targetDayKey) ?? null,
                     repeatRule: recurringRule,
@@ -2201,15 +2227,13 @@ export default function DayTimeline() {
                 return;
               }
 
-              const persistedEndMin = isEditingActiveDoneBlock
-                ? Math.min(endMin, Math.max(startMin + 1, getCurrentMinute()))
-                : endMin;
+              const persistedEndMin = effectivePersistedEndMin;
               const updatedBlock: TimeBlock = {
                 ...existing,
-                lane: editorState.lane,
+                lane: effectiveLane,
                 title,
                 tags: nextTags,
-                startMin,
+                startMin: effectiveStartMin,
                 endMin: persistedEndMin,
                 linkedPlannedId: linkedPlannedIdForSingle,
                 recurrenceId: existing.recurrenceId ? null : existing.recurrenceId ?? null,
@@ -2217,16 +2241,16 @@ export default function DayTimeline() {
                 repeatRule: null,
               };
 
-              const effectiveEndMin = isEditingActiveDoneBlock
+              const effectiveEndMinForOverlap = isEditingActiveDoneBlock
                 ? getActiveDoneBlockEffectiveEndMin(
-                    startMin,
+                    effectiveStartMin,
                     persistedEndMin,
                     getCurrentMinute(),
                     true
                   )
-                : endMin;
+                : effectivePersistedEndMin;
 
-              if (hasOverlap(updatedBlock.lane, existing.id, startMin, effectiveEndMin, blocksForSelectedDay)) {
+              if (hasOverlap(updatedBlock.lane, existing.id, effectiveStartMin, effectiveEndMinForOverlap, blocksForSelectedDay)) {
                 Alert.alert('Invalid time', 'Time overlaps another block.');
                 return;
               }
@@ -2264,7 +2288,7 @@ export default function DayTimeline() {
               return;
             }
 
-            const shouldRebuildSeries = editorState.repeatDirty;
+            const shouldRebuildSeries = isEditingActiveDoneBlock ? false : editorState.repeatDirty;
 
             if (!shouldRebuildSeries) {
               const dayBlocksCache = new Map<string, TimeBlock[]>();
@@ -2284,18 +2308,24 @@ export default function DayTimeline() {
 
                 const updatedBlock: TimeBlock = {
                   ...target.block,
-                  lane: editorState.lane,
+                  lane: effectiveLane,
                   title,
                   tags: nextTags,
-                  startMin,
-                  endMin,
-                  linkedPlannedId: editorState.lane === 'done' ? null : undefined,
+                  startMin: effectiveStartMin,
+                  endMin: effectivePersistedEndMin,
+                  linkedPlannedId: isEditingActiveDoneBlock
+                    ? target.block.lane === 'done'
+                      ? target.block.linkedPlannedId ?? null
+                      : undefined
+                    : effectiveLane === 'done'
+                      ? null
+                      : undefined,
                   recurrenceId: nextRecurrenceId,
                   recurrenceIndex: target.block.recurrenceIndex ?? null,
                   repeatRule,
                 };
 
-                if (hasOverlap(updatedBlock.lane, updatedBlock.id, startMin, endMin, dayBlocks)) {
+                if (hasOverlap(updatedBlock.lane, updatedBlock.id, effectiveStartMin, effectivePersistedEndMin, dayBlocks)) {
                   Alert.alert('Invalid time', `One or more events would overlap on ${target.dayKey}.`);
                   return;
                 }
@@ -2888,9 +2918,12 @@ export default function DayTimeline() {
       return block.linkedPlannedId === focusedPlannedId;
     };
 
-    const toRenderable = (lane: Lane) =>
-      sortByStartMin(sortedBlocks.filter((block) => block.lane === lane))
-        .map((block) => {
+    const toRenderable = (lane: Lane) => {
+      const laneBlocks = sortByStartMin(sortedBlocks.filter((block) => block.lane === lane));
+
+      return laneBlocks.map((block, index) => {
+        const previousBlock = laneBlocks[index - 1] ?? null;
+        const nextBlock = laneBlocks[index + 1] ?? null;
         const matches = matchesVisibleCategoryIds(block, visibleCategoryIdSet);
 
         const dimForFocus = isFocusActive && !isHighlighted(block);
@@ -2898,9 +2931,11 @@ export default function DayTimeline() {
         return {
           block,
           dimmed: !matches || dimForFocus,
+          touchesPrevious: previousBlock?.endMin === block.startMin,
+          touchesNext: nextBlock?.startMin === block.endMin,
         };
-      })
-      .filter((item): item is { block: TimeBlock; dimmed: boolean } => item !== null);
+      });
+    };
 
     return {
       planned: toRenderable('planned'),
@@ -3361,7 +3396,7 @@ export default function DayTimeline() {
                     {hourLineOffsets.map((top, index) => {
                       return <View key={index} style={[styles.hourLine, { top }]} />;
                     })}
-                    {renderedLaneBlocks[lane].map(({ block, dimmed }) => {
+                    {renderedLaneBlocks[lane].map(({ block, dimmed, touchesPrevious, touchesNext }) => {
                       const isActiveBlock = activeDoneBlockIdForDay === block.id;
 
                       return (
@@ -3392,6 +3427,8 @@ export default function DayTimeline() {
                           dragEnabled={!isActiveBlock}
                           dimmed={dimmed}
                           isActive={isActiveBlock}
+                          touchesPrevious={touchesPrevious}
+                          touchesNext={touchesNext}
                           pixelsPerMinute={pixelsPerMinute}
                         />
                       );
@@ -3431,7 +3468,7 @@ export default function DayTimeline() {
                   return <View key={index} style={[styles.hourLine, { top }]} />;
                 })}
 
-                {renderedLaneBlocks[selectedLane].map(({ block, dimmed }) => {
+                {renderedLaneBlocks[selectedLane].map(({ block, dimmed, touchesPrevious, touchesNext }) => {
                   const isActiveBlock = activeDoneBlockIdForDay === block.id;
 
                   return (
@@ -3462,6 +3499,8 @@ export default function DayTimeline() {
                       dragEnabled={!isActiveBlock}
                       dimmed={dimmed}
                       isActive={isActiveBlock}
+                      touchesPrevious={touchesPrevious}
+                      touchesNext={touchesNext}
                       pixelsPerMinute={pixelsPerMinute}
                     />
                   );
@@ -3504,13 +3543,16 @@ export default function DayTimeline() {
           </GestureDetector>
         </View>
 
-      {feedbackMessage ? <Text style={[styles.feedbackText, { bottom: 8 + insets.bottom }]}>{feedbackMessage}</Text> : null}
+      {feedbackMessage && !editorState.visible ? (
+        <Text style={[styles.feedbackText, { bottom: 8 + insets.bottom }]}>{feedbackMessage}</Text>
+      ) : null}
 
       <BlockEditorModal
         visible={editorState.visible}
         editorSessionKey={editorSessionKey}
         mode={editorState.mode}
         showRepeatControls
+        feedbackMessage={editorState.visible ? feedbackMessage : null}
         lane={editorState.lane}
         titleValue={editorState.title}
         selectedTags={editorState.tags}
@@ -3527,6 +3569,8 @@ export default function DayTimeline() {
         categoryOptions={categoryOptions}
         plannedLinkOptions={plannedLinkOptions}
         errorText={editorState.errorText}
+        isActiveDoneBlock={isEditorActiveDoneBlock}
+        onRestrictedAction={handleActiveEditRestriction}
         onChangeTitle={(value) => setEditorField('title', value)}
         onToggleTag={toggleEditorTag}
         onChangeStart={(value) => setEditorField('startText', value)}

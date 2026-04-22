@@ -40,6 +40,8 @@ type BlockEditorModalProps = {
   editorSessionKey: number;
   mode: 'create' | 'edit';
   showRepeatControls?: boolean;
+  isActiveDoneBlock?: boolean;
+  feedbackMessage?: string | null;
   lane: Lane;
   titleValue: string;
   selectedTags: string[];
@@ -57,6 +59,7 @@ type BlockEditorModalProps = {
   plannedLinkOptions: PlannedLinkOption[];
   errorText: string | null;
   saveDisabled?: boolean;
+  onRestrictedAction?: () => void;
   onChangeTitle: (value: string) => void;
   onToggleTag: (tag: string) => void;
   onChangeStart: (value: string) => void;
@@ -242,6 +245,8 @@ export function BlockEditorModal({
   editorSessionKey,
   mode,
   showRepeatControls = mode === 'create',
+  isActiveDoneBlock = false,
+  feedbackMessage = null,
   lane,
   titleValue,
   selectedTags,
@@ -259,6 +264,7 @@ export function BlockEditorModal({
   plannedLinkOptions,
   errorText,
   saveDisabled = false,
+  onRestrictedAction,
   onChangeTitle,
   onToggleTag,
   onChangeStart,
@@ -280,6 +286,7 @@ export function BlockEditorModal({
   const insets = useSafeAreaInsets();
   const colors = useUIColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const feedbackIconColor = colors.appBackground === '#0B0D11' ? '#FBBF24' : '#F59E0B';
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [repeatPickerVisible, setRepeatPickerVisible] = useState(false);
@@ -300,6 +307,7 @@ export function BlockEditorModal({
   const [wheelDuration, setWheelDuration] = useState(60);
   const [draftTitle, setDraftTitle] = useState(titleValue);
   const syncedPickerTypeRef = useRef<PickerType>(null);
+  const isRestrictedActiveEdit = mode === 'edit' && isActiveDoneBlock;
 
   const resolvedCategoryOptions = useMemo(
     () => (categoryOptions.length ? categoryOptions : [...CATEGORY_OPTIONS]),
@@ -379,6 +387,10 @@ export function BlockEditorModal({
     () => buildCalendarCells(repeatCalendarMonthStart),
     [repeatCalendarMonthStart]
   );
+  const linkedPlannedOption = useMemo(
+    () => plannedLinkOptions.find((option) => option.id === linkedPlannedId) ?? null,
+    [linkedPlannedId, plannedLinkOptions]
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -452,6 +464,9 @@ export function BlockEditorModal({
       onChangeTitle(draftTitle);
     }
   };
+  const handleRestrictedAction = () => {
+    onRestrictedAction?.();
+  };
 
   const titleValid = draftTitle.trim().length > 0;
   const resolvedSaveDisabled = saveDisabled || !titleValid;
@@ -479,21 +494,45 @@ export function BlockEditorModal({
           <View style={styles.headerLaneRow}>
             {(['planned', 'done'] as Lane[]).map((value) => {
               const selected = lane === value;
+              const disabled = isRestrictedActiveEdit && value !== 'done';
 
               return (
                 <Pressable
                   key={`header-${value}`}
                   accessibilityLabel={`Set type ${value === 'planned' ? 'plan' : 'done'}`}
-                  style={[styles.headerLaneChip, selected && styles.headerLaneChipSelected]}
-                  onPress={() => onChangeLane(value)}>
-                  <Text style={[styles.headerLaneChipText, selected && styles.headerLaneChipTextSelected]}>
+                  style={[
+                    styles.headerLaneChip,
+                    selected && styles.headerLaneChipSelected,
+                    disabled && styles.headerLaneChipDisabled,
+                  ]}
+                  onPress={() => {
+                    if (isRestrictedActiveEdit) {
+                      if (!selected) {
+                        handleRestrictedAction();
+                      }
+                      return;
+                    }
+
+                    onChangeLane(value);
+                  }}>
+                  <Text
+                    style={[
+                      styles.headerLaneChipText,
+                      selected && styles.headerLaneChipTextSelected,
+                      disabled && styles.headerLaneChipTextDisabled,
+                    ]}>
                     {value === 'planned' ? 'Plan' : 'Done'}
                   </Text>
                 </Pressable>
               );
             })}
           </View>
-
+          {feedbackMessage ? (
+            <View style={styles.feedbackBanner}>
+              <Ionicons name="alert-circle-outline" size={16} color={feedbackIconColor} />
+              <Text style={styles.feedbackBannerText}>{feedbackMessage}</Text>
+            </View>
+          ) : null}
           <ScrollView
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.formBody}
@@ -520,7 +559,16 @@ export function BlockEditorModal({
               <View style={styles.timeColumn}>
                 <Text style={styles.label}>Start Time</Text>
                 <View style={styles.startControlGroup}>
-                  <Pressable style={styles.dropdown} onPress={() => setPickerType('startTime')}>
+                  <Pressable
+                    style={[styles.dropdown, isRestrictedActiveEdit && styles.dropdownDisabled]}
+                    onPress={() => {
+                      if (isRestrictedActiveEdit) {
+                        handleRestrictedAction();
+                        return;
+                      }
+
+                      setPickerType('startTime');
+                    }}>
                     <Text style={styles.dropdownText}>{toTimeLabel(selectedHour, selectedMinute)}</Text>
                     <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                   </Pressable>
@@ -529,8 +577,19 @@ export function BlockEditorModal({
               <View style={styles.timeColumn}>
                 <Text style={styles.label}>End Time</Text>
                 <View style={styles.startControlGroup}>
-                  <Pressable style={styles.dropdown} onPress={() => setPickerType('endTime')}>
-                    <Text style={styles.dropdownText}>{toTimeLabel(selectedEndHour, selectedEndMinute)}</Text>
+                  <Pressable
+                    style={[styles.dropdown, isRestrictedActiveEdit && styles.dropdownDisabled]}
+                    onPress={() => {
+                      if (isRestrictedActiveEdit) {
+                        handleRestrictedAction();
+                        return;
+                      }
+
+                      setPickerType('endTime');
+                    }}>
+                    <Text style={styles.dropdownText}>
+                      {isRestrictedActiveEdit ? 'Now' : toTimeLabel(selectedEndHour, selectedEndMinute)}
+                    </Text>
                     <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                   </Pressable>
                 </View>
@@ -542,12 +601,24 @@ export function BlockEditorModal({
                 <Text style={styles.label}>Repeat</Text>
                 <Pressable
                   accessibilityLabel="Choose repeat rule"
-                  style={styles.dropdown}
-                  onPress={() => setRepeatPickerVisible(true)}>
+                  style={[styles.dropdown, isRestrictedActiveEdit && styles.dropdownDisabled]}
+                  onPress={() => {
+                    if (isRestrictedActiveEdit) {
+                      handleRestrictedAction();
+                      return;
+                    }
+
+                    setRepeatPickerVisible(true);
+                  }}>
                   <Text style={styles.dropdownText}>{repeatLabel}</Text>
                   <Ionicons name="chevron-down" size={14} color={colors.neutralTextSoft} />
                 </Pressable>
                 {repeatPreset !== 'none' ? (
+                  isRestrictedActiveEdit ? (
+                    <Text style={styles.repeatHintText}>
+                      Stop this block to change repeat details.
+                    </Text>
+                  ) : (
                   <View style={styles.repeatDetailsWrap}>
                     {repeatPreset !== 'weekdays' ? (
                       <View style={styles.repeatUntilWrap}>
@@ -672,6 +743,7 @@ export function BlockEditorModal({
                       </Text>
                     ) : null}
                   </View>
+                  )
                 ) : null}
               </View>
             ) : null}
@@ -699,7 +771,7 @@ export function BlockEditorModal({
                     })}
                     {row.length < 2 ? <View style={styles.categoryChipSpacer} /> : null}
                   </View>
-                  {lane === 'done' && selectedCategoryId && selectedCategoryRowIndex === rowIndex ? (
+                  {lane === 'done' && selectedCategoryId && selectedCategoryRowIndex === rowIndex && !isRestrictedActiveEdit ? (
                     <View style={styles.inlineLinkSection}>
                       <View style={styles.inlineLinkHeader}>
                         <Text style={styles.label}>Counts toward</Text>
@@ -746,7 +818,23 @@ export function BlockEditorModal({
                 </React.Fragment>
               ))}
             </View>
-            {lane === 'done' && !selectedCategoryId ? (
+            {lane === 'done' && isRestrictedActiveEdit ? (
+              <View style={styles.inlineLinkSection}>
+                <Text style={styles.label}>Counts toward</Text>
+                {linkedPlannedOption ? (
+                  <>
+                    <Text style={styles.inlineLinkTitle}>{linkedPlannedOption.title}</Text>
+                    <Text style={styles.inlineLinkTime}>
+                      {formatMinutesAmPm(linkedPlannedOption.startMin)}-{formatMinutesAmPm(linkedPlannedOption.endMin)}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={styles.inlineLinkEmpty}>No linked plan block.</Text>
+                )}
+                <Text style={styles.repeatHintText}>Stop this block to change plan linkage.</Text>
+              </View>
+            ) : null}
+            {lane === 'done' && !selectedCategoryId && !isRestrictedActiveEdit ? (
               <View style={styles.inlineLinkSection}>
                 <View style={styles.inlineLinkHeader}>
                   <Text style={styles.label}>Counts toward</Text>
@@ -1023,6 +1111,9 @@ function createStyles(colors: UIColors) {
     cardShadow: isDark ? '#000000' : '#111827',
     destructiveBackground: isDark ? '#3F1D1D' : '#FEE2E2',
     destructiveText: isDark ? '#FCA5A5' : '#991B1B',
+    warningBackground: isDark ? '#3A2A05' : '#FEF3C7',
+    warningBorder: isDark ? '#FBBF24' : '#F59E0B',
+    warningText: isDark ? '#FDE68A' : '#92400E',
     primaryButtonBackground: colors.neutralText,
     primaryButtonDisabled: isDark ? '#374151' : '#C7CDD6',
     onPrimaryText: isDark ? '#0B0D11' : '#FFFFFF',
@@ -1084,6 +1175,11 @@ function createStyles(colors: UIColors) {
     backgroundColor: colors.surface,
     borderColor: colors.neutralText,
   },
+  headerLaneChipDisabled: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.neutralBorder,
+    opacity: 0.6,
+  },
   headerLaneChipText: {
     color: colors.neutralTextSoft,
     fontSize: 12,
@@ -1091,6 +1187,9 @@ function createStyles(colors: UIColors) {
   },
   headerLaneChipTextSelected: {
     color: colors.neutralText,
+  },
+  headerLaneChipTextDisabled: {
+    color: colors.neutralTextSoft,
   },
   headerText: {
     color: colors.neutralText,
@@ -1110,6 +1209,25 @@ function createStyles(colors: UIColors) {
   formBody: {
     gap: 10,
     paddingBottom: 12,
+  },
+  feedbackBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: theme.warningBorder,
+    borderRadius: UI_RADIUS.control,
+    backgroundColor: theme.warningBackground,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginBottom: 10,
+  },
+  feedbackBannerText: {
+    flex: 1,
+    color: theme.warningText,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
   },
   label: {
     fontSize: UI_TYPE.body,
@@ -1271,6 +1389,10 @@ function createStyles(colors: UIColors) {
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: colors.surface,
+  },
+  dropdownDisabled: {
+    backgroundColor: colors.surfaceMuted,
+    opacity: 0.75,
   },
   dropdownText: {
     color: colors.neutralText,

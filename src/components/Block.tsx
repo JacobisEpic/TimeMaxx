@@ -14,6 +14,8 @@ const MINUTES_PER_DAY = 24 * 60;
 const SNAP_INTERVAL_MINUTES = 15;
 const CHECKBOX_HIT_SIZE = 24;
 const LAYOUT_QUANTIZATION_FACTOR = 2;
+const BLOCK_CORNER_RADIUS = 8;
+const TOUCHING_BLOCK_SEPARATOR_PX = StyleSheet.hairlineWidth;
 
 type BlockProps = {
   id: string;
@@ -43,6 +45,8 @@ type BlockProps = {
   pixelsPerMinute?: number;
   suppressText?: boolean;
   isActive?: boolean;
+  touchesPrevious?: boolean;
+  touchesNext?: boolean;
 };
 
 export function Block({
@@ -73,16 +77,28 @@ export function Block({
   pixelsPerMinute = PIXELS_PER_MINUTE,
   suppressText = false,
   isActive = false,
+  touchesPrevious = false,
+  touchesNext = false,
 }: BlockProps) {
   const colors = useUIColors();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
   const effectivePixelsPerMinute = Math.max(0.01, pixelsPerMinute);
   const durationMin = Math.max(1, endMin - startMin);
-  const top = Math.round(startMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR;
-  const height = Math.max(
+  const baseTop =
+    Math.round(startMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR;
+  const baseHeight = Math.max(
     1,
     Math.round(durationMin * effectivePixelsPerMinute * LAYOUT_QUANTIZATION_FACTOR) / LAYOUT_QUANTIZATION_FACTOR
   );
+  const topSeparatorInset = touchesPrevious ? TOUCHING_BLOCK_SEPARATOR_PX / 2 : 0;
+  const bottomSeparatorInset = touchesNext ? TOUCHING_BLOCK_SEPARATOR_PX / 2 : 0;
+  const top = baseTop + topSeparatorInset;
+  const height = Math.max(1, baseHeight - topSeparatorInset - bottomSeparatorInset);
+  const cornerRadius = Math.min(BLOCK_CORNER_RADIUS, height / 2);
+  const borderWidth = isActive ? 1.5 : 1;
+  const spineInset = Math.min(borderWidth, Math.max(0, height / 3));
+  const spineRadius = Math.max(0, cornerRadius - spineInset);
+  const spineWidth = Math.min(4, Math.max(2, height - spineInset * 2));
   const primaryTag = tags[0];
   const overrideColor = primaryTag ? categoryColorMap?.[primaryTag.toLowerCase()] : undefined;
   const categoryColor = overrideColor ?? getCategoryColor(primaryTag);
@@ -197,10 +213,24 @@ export function Block({
           height,
           backgroundColor: tintedFill,
           borderColor: isActive ? colors.done : colors.glassStrokeSoft,
-          borderWidth: isActive ? 1.5 : 1,
+          borderWidth,
+          borderRadius: cornerRadius,
         },
         ]}>
-      <Animated.View style={[styles.spine, { backgroundColor: categoryColor }]} />
+      <Animated.View
+        style={[
+          styles.spine,
+          {
+            left: spineInset,
+            top: spineInset,
+            bottom: spineInset,
+            width: spineWidth,
+            backgroundColor: categoryColor,
+            borderTopLeftRadius: spineRadius,
+            borderBottomLeftRadius: spineRadius,
+          },
+        ]}
+      />
       {isActive ? <Text style={styles.activeBadge}>Now</Text> : null}
       {showCopyCheckbox ? (
         <Animated.View style={styles.checkboxWrap}>
@@ -241,7 +271,7 @@ function createStyles(colors: UIColors) {
       left: 6,
       right: 6,
       borderWidth: 1,
-      borderRadius: 8,
+      borderRadius: BLOCK_CORNER_RADIUS,
       paddingLeft: 10,
       paddingRight: 8,
       paddingVertical: 6,
