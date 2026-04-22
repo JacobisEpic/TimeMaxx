@@ -133,7 +133,7 @@ const NOW_BUBBLE_HEIGHT = 20;
 const NOW_COLOR = '#FF3B30';
 const NOW_LINE_CONNECT_OFFSET = 4;
 const MIN_TIMELINE_ZOOM = 0.8;
-const MAX_TIMELINE_ZOOM = 3;
+const MAX_TIMELINE_ZOOM = 12;
 const PINCH_ZOOM_UPDATE_STEP = 0.003;
 const PINCH_INTENT_LOCK_THRESHOLD_PX = 12;
 const PINCH_VERTICAL_INTENT_RATIO = 1.2;
@@ -3023,6 +3023,36 @@ export default function DayTimeline() {
     showFeedback,
   ]);
 
+  const handleStopActiveBlock = useCallback(() => {
+    if (activeDoneMutationInFlightRef.current) {
+      showFeedback('Updating active block...');
+      return;
+    }
+
+    if (!activeDoneBlockRef.current) {
+      return;
+    }
+
+    closeEditor();
+
+    void (async () => {
+      try {
+        const liveTodayDayKey = getLocalDayKey();
+        const currentActiveDoneBlock = activeDoneBlockRef.current;
+        await finalizeActiveDoneBlock({
+          finalMinute:
+            currentActiveDoneBlock?.dayKey === liveTodayDayKey
+              ? getCurrentMinute()
+              : MINUTES_PER_DAY,
+        });
+        void triggerSuccessHaptic();
+        showFeedback('Stopped active block.');
+      } catch {
+        Alert.alert('Storage error', 'Could not stop the active block.');
+      }
+    })();
+  }, [closeEditor, finalizeActiveDoneBlock, showFeedback]);
+
   const handleSelectCalendarDay = useCallback(
     (nextDayKey: string) => {
       setDayKey(nextDayKey);
@@ -3244,13 +3274,13 @@ export default function DayTimeline() {
               })}
             </View>
             <Pressable
-              accessibilityLabel="Start activity now"
+              accessibilityLabel={activeDoneBlock ? 'Stop active block' : 'Start activity now'}
               accessibilityRole="button"
               style={[
                 styles.startNowButton,
                 activeDoneBlock && styles.startNowButtonActive,
               ]}
-              onPress={handleStartNow}>
+              onPress={activeDoneBlock ? handleStopActiveBlock : handleStartNow}>
               <View
                 style={[
                   styles.startNowDot,
@@ -3262,7 +3292,7 @@ export default function DayTimeline() {
                   styles.startNowButtonText,
                   activeDoneBlock && styles.startNowButtonTextActive,
                 ]}>
-                Start Now
+                {activeDoneBlock ? 'Stop' : 'Start Now'}
               </Text>
             </Pressable>
           </View>
