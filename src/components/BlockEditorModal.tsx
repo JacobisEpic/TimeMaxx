@@ -42,6 +42,8 @@ type BlockEditorModalProps = {
   showRepeatControls?: boolean;
   isActiveDoneBlock?: boolean;
   feedbackMessage?: string | null;
+  showResumeToNow?: boolean;
+  resumeToNow?: boolean;
   lane: Lane;
   titleValue: string;
   selectedTags: string[];
@@ -60,6 +62,7 @@ type BlockEditorModalProps = {
   errorText: string | null;
   saveDisabled?: boolean;
   onRestrictedAction?: () => void;
+  onToggleResumeToNow?: () => void;
   onChangeTitle: (value: string) => void;
   onToggleTag: (tag: string) => void;
   onChangeStart: (value: string) => void;
@@ -76,6 +79,7 @@ type BlockEditorModalProps = {
   onCancel: () => void;
   onSave: (overrides?: { title?: string }) => void;
   onDelete: () => void;
+  onStopActiveBlock?: () => void;
   onCopyToDone?: () => void;
 };
 
@@ -247,6 +251,8 @@ export function BlockEditorModal({
   showRepeatControls = mode === 'create',
   isActiveDoneBlock = false,
   feedbackMessage = null,
+  showResumeToNow = false,
+  resumeToNow = false,
   lane,
   titleValue,
   selectedTags,
@@ -265,6 +271,7 @@ export function BlockEditorModal({
   errorText,
   saveDisabled = false,
   onRestrictedAction,
+  onToggleResumeToNow,
   onChangeTitle,
   onToggleTag,
   onChangeStart,
@@ -281,12 +288,14 @@ export function BlockEditorModal({
   onCancel,
   onSave,
   onDelete,
+  onStopActiveBlock,
   onCopyToDone,
 }: BlockEditorModalProps) {
   const insets = useSafeAreaInsets();
   const colors = useUIColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const feedbackIconColor = colors.appBackground === '#0B0D11' ? '#FBBF24' : '#F59E0B';
+  const warningActionIconColor = colors.appBackground === '#0B0D11' ? '#FDE68A' : '#92400E';
   const [linkPickerVisible, setLinkPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [repeatPickerVisible, setRepeatPickerVisible] = useState(false);
@@ -595,6 +604,38 @@ export function BlockEditorModal({
                 </View>
               </View>
             </View>
+            {isActiveDoneBlock && onStopActiveBlock ? (
+              <Pressable
+                accessibilityLabel="Stop active block"
+                style={[styles.resumeToNowRow, styles.stopInlineRow]}
+                onPress={onStopActiveBlock}>
+                <View style={styles.resumeToNowCopy}>
+                  <Text style={[styles.resumeToNowTitle, styles.stopInlineTitle]}>Stop Now</Text>
+                  <Text style={[styles.resumeToNowHint, styles.stopInlineHint]}>
+                    End this block and unlock time editing.
+                  </Text>
+                </View>
+                <Ionicons name="stop-circle-outline" size={20} color={warningActionIconColor} />
+              </Pressable>
+            ) : null}
+            {showResumeToNow ? (
+              <Pressable
+                accessibilityLabel={resumeToNow ? 'Disable continue to now' : 'Enable continue to now'}
+                style={[styles.resumeToNowRow, resumeToNow && styles.resumeToNowRowSelected]}
+                onPress={onToggleResumeToNow}>
+                <View style={styles.resumeToNowCopy}>
+                  <Text style={styles.resumeToNowTitle}>Continue to Now</Text>
+                  <Text style={styles.resumeToNowHint}>
+                    Reattach this block to the live Now end time.
+                  </Text>
+                </View>
+                <Ionicons
+                  name={resumeToNow ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={20}
+                  color={resumeToNow ? colors.done : colors.neutralTextSoft}
+                />
+              </Pressable>
+            ) : null}
 
             {showRepeatControls ? (
               <View style={styles.repeatSection}>
@@ -1291,6 +1332,47 @@ function createStyles(colors: UIColors) {
   timeColumn: {
     flex: 1,
     gap: 6,
+  },
+  resumeToNowRow: {
+    borderWidth: 1,
+    borderColor: colors.neutralBorder,
+    borderRadius: UI_RADIUS.control,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  resumeToNowRowSelected: {
+    borderColor: colors.done,
+    backgroundColor: colors.doneTint,
+  },
+  resumeToNowCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  resumeToNowTitle: {
+    color: colors.neutralText,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  resumeToNowHint: {
+    color: colors.neutralTextSoft,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  stopInlineRow: {
+    borderColor: theme.warningBorder,
+    backgroundColor: theme.warningBackground,
+  },
+  stopInlineTitle: {
+    color: theme.warningText,
+  },
+  stopInlineHint: {
+    color: theme.warningText,
+    opacity: 0.85,
   },
   repeatSection: {
     gap: 6,
