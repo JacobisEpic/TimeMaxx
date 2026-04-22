@@ -8,12 +8,14 @@ This is the concrete release path for shipping an update of the existing App Sto
 
 - Live App Store version confirmed on April 22, 2026 via Apple's public lookup API: `1.0`
 - Repo marketing version is now staged at: `1.0.1`
+- Local Xcode project marketing version is now staged at: `1.0.1`
+- Local Xcode project build number is now staged at: `2`
 - Apple app ID / App Store Connect app ID: `6760919064`
 - Bundle ID: `com.timemaxx.app`
 
-## Preferred path: EAS Build + EAS Submit
+## Preferred path: local Xcode archive
 
-This repo does not keep a committed `ios/` project, so EAS is the cleanest repeatable update path.
+This workspace already has a local `ios/` project, so use Xcode Organizer for the update instead of EAS.
 
 ## 1) Final local validation
 
@@ -22,27 +24,29 @@ npm install
 npm run release:check
 ```
 
-## 2) Build the store binary
+## 2) Open the workspace in Xcode
 
 ```bash
-npm run release:ios
+open ios/TimeMaxx.xcworkspace
 ```
 
-What this now does:
+In Xcode:
 
-- runs local release checks first
-- creates an iOS store build with the `production` EAS profile
-- auto-increments the iOS build number remotely so you do not reuse a prior App Store build number
+- select the `TimeMaxx` scheme
+- choose `Any iOS Device (arm64)` as the run destination
+- confirm Signing is using the correct Apple team
+- confirm version is `1.0.1` and build is `2`
 
-## 3) Submit the processed build
+## 3) Archive and upload
 
-After the EAS build finishes successfully:
+In Xcode:
 
-```bash
-npm run release:ios:submit
-```
-
-This submits the latest processed iOS build to the existing App Store Connect app `6760919064`.
+- `Product -> Archive`
+- wait for Organizer to open
+- validate the archive
+- click `Distribute App`
+- choose `App Store Connect`
+- upload the build to the existing app
 
 ## 4) Finish App Store Connect metadata
 
@@ -55,8 +59,8 @@ This submits the latest processed iOS build to the existing App Store Connect ap
 
 ## Versioning rules for the next update
 
-- Customer-facing version: update `app.json` and `package.json` together
-- iOS build number: do not hand-edit it in this repo for the EAS production flow; `eas.json` now auto-increments it remotely
+- Customer-facing version: update `app.json`, `package.json`, and the local Xcode project marketing version together
+- iOS build number: increment `CURRENT_PROJECT_VERSION` in the local Xcode project before each new upload
 
 ## Export compliance
 
