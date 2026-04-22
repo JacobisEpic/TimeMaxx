@@ -74,6 +74,7 @@ type EditorState = {
   repeatOccurrenceCountText: string;
   repeatDirty: boolean;
   isRecurringSource: boolean;
+  resumeToNow: boolean;
   linkedPlannedId: string | null;
   errorText: string | null;
 };
@@ -184,6 +185,7 @@ const INITIAL_EDITOR_STATE: EditorState = {
   repeatOccurrenceCountText: '10',
   repeatDirty: false,
   isRecurringSource: false,
+  resumeToNow: false,
   linkedPlannedId: null,
   errorText: null,
 };
@@ -641,6 +643,10 @@ export default function DayTimeline() {
     () => (activeDoneBlock?.dayKey === dayKey ? activeDoneBlock.blockId : null),
     [activeDoneBlock, dayKey]
   );
+  const latestDoneBlockIdForDay = useMemo(
+    () => sortByStartMin(storedBlocks.filter((block) => block.lane === 'done')).at(-1)?.id ?? null,
+    [storedBlocks]
+  );
   const isEditorActiveDoneBlock = useMemo(
     () =>
       editorState.visible &&
@@ -650,6 +656,30 @@ export default function DayTimeline() {
       activeDoneBlock?.dayKey === dayKey &&
       activeDoneBlock.blockId === editorState.blockId,
     [activeDoneBlock, dayKey, editorState.blockId, editorState.lane, editorState.mode, editorState.visible]
+  );
+  const canResumeEditedBlockToNow = useMemo(
+    () =>
+      editorState.visible &&
+      editorState.mode === 'edit' &&
+      editorState.lane === 'done' &&
+      editorState.blockId !== null &&
+      dayKey === todayDayKey &&
+      !editorState.isRecurringSource &&
+      !isEditorActiveDoneBlock &&
+      activeDoneBlockIdForDay === null &&
+      editorState.blockId === latestDoneBlockIdForDay,
+    [
+      activeDoneBlockIdForDay,
+      dayKey,
+      editorState.blockId,
+      editorState.isRecurringSource,
+      editorState.lane,
+      editorState.mode,
+      editorState.visible,
+      isEditorActiveDoneBlock,
+      latestDoneBlockIdForDay,
+      todayDayKey,
+    ]
   );
   const sortedBlocks = useMemo(
     () =>
@@ -1521,6 +1551,7 @@ export default function DayTimeline() {
         repeatOccurrenceCountText: '10',
         repeatDirty: false,
         isRecurringSource: false,
+        resumeToNow: false,
         linkedPlannedId: null,
         errorText: null,
       });
@@ -1561,6 +1592,7 @@ export default function DayTimeline() {
       repeatOccurrenceCountText: String(repeatRule?.occurrenceCount ?? 10),
       repeatDirty: false,
       isRecurringSource: Boolean(block.recurrenceId),
+      resumeToNow: false,
       linkedPlannedId: block.lane === 'done' ? block.linkedPlannedId ?? null : null,
       errorText: null,
     });
@@ -1773,7 +1805,16 @@ export default function DayTimeline() {
     setEditorState((current) => ({
       ...current,
       lane,
+      resumeToNow: lane === 'done' ? current.resumeToNow : false,
       linkedPlannedId: lane === 'done' ? current.linkedPlannedId : null,
+      errorText: null,
+    }));
+  }, []);
+
+  const toggleEditorResumeToNow = useCallback(() => {
+    setEditorState((current) => ({
+      ...current,
+      resumeToNow: !current.resumeToNow,
       errorText: null,
     }));
   }, []);
@@ -2075,6 +2116,13 @@ export default function DayTimeline() {
       const effectiveLane = isEditingActiveDoneBlock ? existing.lane : editorState.lane;
       const effectiveStartMin = isEditingActiveDoneBlock ? existing.startMin : startMin;
       const effectivePersistedEndMin = isEditingActiveDoneBlock ? existing.endMin : endMin;
+      const wantsResumeToNow =
+        editorState.resumeToNow &&
+        effectiveLane === 'done' &&
+        dayKey === todayDayKey &&
+        !existing.recurrenceId &&
+        !isEditingActiveDoneBlock &&
+        existing.id === latestDoneBlockIdForDay;
       const linkedPlannedIdForSingle =
         isEditingActiveDoneBlock
           ? existing.lane === 'done'
@@ -2227,7 +2275,12 @@ export default function DayTimeline() {
                 return;
               }
 
-              const persistedEndMin = effectivePersistedEndMin;
+              const persistedEndMin = wantsResumeToNow
+                ? Math.min(
+                    effectivePersistedEndMin,
+                    Math.max(effectiveStartMin + 1, getCurrentMinute())
+                  )
+                : effectivePersistedEndMin;
               const updatedBlock: TimeBlock = {
                 ...existing,
                 lane: effectiveLane,
@@ -2256,6 +2309,12 @@ export default function DayTimeline() {
               }
 
               await updateBlock(updatedBlock, dayKey);
+              if (wantsResumeToNow) {
+                await persistActiveDoneBlock({
+                  blockId: updatedBlock.id,
+                  dayKey,
+                });
+              }
               const refreshedBlocks = await getBlocksForDay(dayKey);
               setBlocks(sortByStartMin(refreshedBlocks));
               setDragPreviewById((current) => {
@@ -2597,9 +2656,11 @@ export default function DayTimeline() {
     editorState,
     finalizeActiveDoneBlock,
     plannedLinkOptions,
+    persistActiveDoneBlock,
     showFeedback,
     sortedBlocks,
     storedBlocks,
+    todayDayKey,
   ]);
 
   const isEditorSaveDisabled = useMemo(() => {
@@ -3084,6 +3145,40 @@ export default function DayTimeline() {
     })();
   }, [closeEditor, finalizeActiveDoneBlock, showFeedback]);
 
+  const handleStopActiveBlockFromEditor = useCallback(() => {
+    if (activeDoneMutationInFlightRef.current) {
+      showFeedback('Updating active block...');
+      return;
+    }
+
+    const editingBlockId = editorState.blockId;
+    if (!editingBlockId) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const finalizedBlock = await finalizeActiveDoneBlock({
+          finalMinute: getCurrentMinute(),
+        });
+
+        if (finalizedBlock && finalizedBlock.id === editingBlockId) {
+          setEditorState((current) => ({
+            ...current,
+            endText: formatHHMM(finalizedBlock.endMin),
+            resumeToNow: false,
+            errorText: null,
+          }));
+        }
+
+        void triggerSuccessHaptic();
+        showFeedback('Stopped active block.');
+      } catch {
+        Alert.alert('Storage error', 'Could not stop the active block.');
+      }
+    })();
+  }, [editorState.blockId, finalizeActiveDoneBlock, showFeedback]);
+
   const handleSelectCalendarDay = useCallback(
     (nextDayKey: string) => {
       setDayKey(nextDayKey);
@@ -3553,6 +3648,8 @@ export default function DayTimeline() {
         mode={editorState.mode}
         showRepeatControls
         feedbackMessage={editorState.visible ? feedbackMessage : null}
+        showResumeToNow={canResumeEditedBlockToNow}
+        resumeToNow={editorState.resumeToNow}
         lane={editorState.lane}
         titleValue={editorState.title}
         selectedTags={editorState.tags}
@@ -3571,6 +3668,7 @@ export default function DayTimeline() {
         errorText={editorState.errorText}
         isActiveDoneBlock={isEditorActiveDoneBlock}
         onRestrictedAction={handleActiveEditRestriction}
+        onToggleResumeToNow={toggleEditorResumeToNow}
         onChangeTitle={(value) => setEditorField('title', value)}
         onToggleTag={toggleEditorTag}
         onChangeStart={(value) => setEditorField('startText', value)}
@@ -3654,6 +3752,7 @@ export default function DayTimeline() {
         onCancel={closeEditor}
         onSave={handleSaveEditor}
         onDelete={handleDelete}
+        onStopActiveBlock={handleStopActiveBlockFromEditor}
         onCopyToDone={handleCopyPlannedToDoneFromEditor}
       />
 
